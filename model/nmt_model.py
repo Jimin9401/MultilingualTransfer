@@ -36,7 +36,7 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int):
 
 class CustomMBart(MBartForConditionalGeneration):
 
-    def __init__(self, config: MBARTConfig):
+    def __init__(self, config: MBartConfig):
         super().__init__(config)
 
     def forward(
@@ -90,7 +90,7 @@ class CustomMBart(MBartForConditionalGeneration):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        lm_logits = self.lm_head(outputs[0]) + self.final_logits_bias
+        lm_logits = self.lm_head(outputs[0]) # + self.final_logits_bias
 
         masked_lm_loss = None
         # if labels is not None:
@@ -113,21 +113,22 @@ class CustomMBart(MBartForConditionalGeneration):
             encoder_attentions=outputs.encoder_attentions,
         )
 
-    def rearrange_embedding(self, origin, target):
-        return NotImplementedError
 
     def rearrange_token_embedding(self, new_dict, special_ids: list):
         new_weight = torch.randn([len(new_dict) + 2, self.config.hidden_size])
-        pretrained_word_embedding = self.model.encoder.embed_tokens.weight
+        pretrained_word_embedding = self.model.encoder.embed_tokens.weight.data
 
         src_id, trg_id = special_ids
         src_map_id, trg_map_id = len(new_dict), len(new_dict) + 1
 
         for new_idx, original_idx in new_dict.items():
-            original_idx = torch.LongTensor(original_idx)
-            new_weight[new_idx] = torch.mean(pretrained_word_embedding[original_idx], 0)
+            if len(original_idx)>0:
+                original_idx = torch.LongTensor(original_idx)
+                new_weight[new_idx] = torch.mean(pretrained_word_embedding[original_idx], 0)
 
         new_weight[src_map_id] = pretrained_word_embedding[src_id]
         new_weight[trg_map_id] = pretrained_word_embedding[trg_id]
 
-        self.model.encoder.embed_tokens.weight = new_weight
+        self.model.encoder.embed_tokens.weight.data = new_weight
+        self.lm_head.weight.data = new_weight # shared embedding
+

@@ -237,6 +237,7 @@ class NMTArgument:
         parser.add_argument("--num_warmup_steps", type=int, default=0,
                             help="Number of steps for the warmup in the lr scheduler.")
         parser.add_argument("--replace_vocab", action="store_true")
+        parser.add_argument("--vocab_size", type=int, default=50000)
 
         return parser
 
@@ -244,5 +245,9 @@ class NMTArgument:
         self.data["vocab_path"] = os.path.join(self.data["root"], self.data["dataset"],
                                                self.data["encoder_class"])
         self.data["savename"] = os.path.join(self.data["checkpoint_dir"], f"nmt-{self.data['src']}-{self.data['trg']}")
+
+        self.data["vocab_path"] = os.path.join(self.data["root"],
+                                               f"{self.data['src']}-{self.data['trg']}-{self.data['vocab_size']}")
+
         if self.data["replace_vocab"]:
             self.data["savename"] += "-replace"

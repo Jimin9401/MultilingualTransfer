@@ -82,7 +82,7 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
 def get_batchfier(args, tokenizer: MBart50Tokenizer):
     n_gpu = torch.cuda.device_count()
     train, dev, test = load_dataset(args, tokenizer, "nmt")
-    padding_idx = tokenizer.pad_token_id
+    padding_idx = 1
 
     train_batch = NMTBatchfier(args, train, batch_size=args.per_gpu_train_batch_size * n_gpu, maxlen=args.seq_len,
                                padding_index=padding_idx, device="cuda")
@@ -105,36 +105,41 @@ def run(gpu, args):
     pretrained_config = MBartConfig.from_pretrained(MBARTCLASS)
 
     from util.data_builder import LMAP
+    model = CustomMBart.from_pretrained(args.encoder_class)
+
     if args.replace_vocab:
         from tokenizers import SentencePieceBPETokenizer
-        from corpus_utils.bpe_mapper import CustomTEDTokenizer
-        # vocab_path = os.path.join(args.root, f"{args.src}-{args.trg}-custom")
-        custom_tokenizer = SentencePieceBPETokenizer.from_file(args.vocab_path, args.merges_path)
+        args.vocab_path
+
+        vocab_json_name = args.vocab_path + f"/{args.src}-{args.trg}-vocab.json"
+        merge_name = args.vocab_path + f"/{args.src}-{args.trg}-merges.txt"
+
+        print(vocab_json_name)
+        print(merge_name)
+
+        deployed_tokenizer = SentencePieceBPETokenizer.from_file(vocab_json_name, merge_name)
         pretrained_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src],
                                                                 tgt_lang=LMAP[args.trg])
         from corpus_utils.vocab_util import align_vocabularies
 
-        new_dict = align_vocabularies(pretrained_tokenizer, custom_tokenizer)
-
-        # tokenizer = SentencePieceBPETokenizer.(vocab_path)
-        # tokenizer.add_special_tokens([LMAP[args.src], LMAP[args.trg]])
+        new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer)
         special_map = {k: v for k, v in
-          zip(pretrained_tokenizer.additional_special_tokens, pretrained_tokenizer.additional_special_tokens_ids)}
+                       zip(pretrained_tokenizer.additional_special_tokens, pretrained_tokenizer.additional_special_tokens_ids)}
+        special_ids= [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
+        args.new_special_src_id = len(new_dict)
+
+        args.new_special_trg_id = len(new_dict) + 1
+        model.rearrange_token_embedding(new_dict,special_ids)
+
     else:
-        tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src], tgt_lang=LMAP[args.trg])
+        deployed_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src], tgt_lang=LMAP[args.trg])
 
     args.extended_vocab_size = 0
-
-    model = CustomMBart.from_pretrained(args.encoder_class)
-    train_gen, dev_gen, test_gen = get_batchfier(args, tokenizer)
-
-    if args.replace_vocab:
-        special_ids= [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
-        model.rearrange_embedding(new_dict,special_ids)
+    train_gen, dev_gen, test_gen = get_batchfier(args, deployed_tokenizer)
 
     model.to("cuda")
 
-    trainer = get_trainer(args, model, train_gen, dev_gen, tokenizer)
+    trainer = get_trainer(args, model, train_gen, dev_gen, deployed_tokenizer)
     best_dir = os.path.join(args.savename, "best_model")
 
     if not os.path.isdir(best_dir):

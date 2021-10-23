@@ -1,6 +1,6 @@
 
 Data=ted # specify dataset
-NGPU=1
+NGPU=7
 CHECKPOINT=./checkpoints # specify checkpoint
 
 CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
@@ -8,7 +8,7 @@ CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
   --root data \
   --do_train \
   --src en \
-  --trg ko \
+  --trg fi \
   --evaluate_during_training \
   --lr 5.0e-5 \
   --seed 1994 \
@@ -17,6 +17,7 @@ CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
   --gradient_accumulation_step 4 \
   --mixed_precision \
   --n_epoch 10 \
+  --replace_vocab \
   --checkpoint_dir $CHECKPOINT ;
 
 

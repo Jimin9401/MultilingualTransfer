@@ -173,10 +173,6 @@ def run(gpu,args):
         model.init_embeddings(intersection,remain_vocab)
 
 
-    # if args.merge_version:
-    #     d2p = pd.read_pickle(os.path.join(args.vocab_path, "d2p.pickle"))
-    #     expand_token_embeddings(model, tokenizer)
-    #     embedding(args, model, d2p)
     model.transformer.resize_token_embeddings(tokenizer.vocab_size + 1)
 
     model.cuda(args.gpu)
