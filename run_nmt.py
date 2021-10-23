@@ -1,0 +1,221 @@
+from util.trainer import LMTrainer, NMTTrainer
+from util.data_builder import load_dataset
+from util.args import NMTArgument
+from tqdm import tqdm
+import pandas as pd
+# from embedding_utils.embedding_initializer import transfer_embedding
+# from corpus_utils.bpe_mapper import CustomTokenizer
+from transformers import AdamW, MBart50Tokenizer, MBartConfig
+# from t import WarmupLinearSchedule
+import apex
+from util.batch_generator import NMTBatchfier
+# from model.classification_model import PretrainedTransformer
+from model.nmt_model import CustomMBart, MBARTCLASS
+import torch.multiprocessing as mp
+
+from transformers import get_scheduler
+
+import torch.nn as nn
+import torch
+import random
+from util.logger import *
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def set_seed(random_seed):
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(random_seed)
+    random.seed(random_seed)
+
+
+def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
+    # optimizer = torch.optim.AdamW(model.parameters(), args.learning_rate, weight_decay=args.weight_decay)
+
+    # optimizer=RAdam(model.parameters(),args.learning_rate,weight_decay=args.weight_decay)
+    optimizer = AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
+
+    if args.mixed_precision:
+        print('mixed_precision')
+        opt_level = 'O2'
+        model, optimizer = apex.amp.initialize(model, optimizer, opt_level=opt_level)
+
+        # from apex.parallel import DistributedDataParallel as DDP
+        # model=DDP(model,delay_allreduce=True)
+
+    if torch.cuda.device_count() > 1:
+
+        if args.distributed_training:
+            from util.parallel import set_init_group
+            model = set_init_group(model, args)
+
+        else:
+            print("Let's use", torch.cuda.device_count(), "GPUs!")
+            model = nn.DataParallel(model)
+    # decay_step = args.decay_step
+    # decay_step=0
+    # scheduler = WarmupLinearSchedule(optimizer, args.warmup_step, args.decay_step)
+
+    criteria = nn.CrossEntropyLoss(ignore_index=1)
+
+    if args.max_train_steps is None:
+        args.num_update_steps_per_epoch = train_batchfier.num_buckets
+        args.max_train_steps = args.n_epoch * args.num_update_steps_per_epoch
+
+    lr_scheduler = get_scheduler(
+        name=args.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=args.num_warmup_steps,
+        num_training_steps=args.max_train_steps,
+    )
+
+    trainer = NMTTrainer(args, model, train_batchfier, test_batchfier, optimizer, args.gradient_accumulation_step,
+                         criteria, args.clip_norm, args.mixed_precision, lr_scheduler)
+
+    return trainer
+
+
+def get_batchfier(args, tokenizer: MBart50Tokenizer):
+    n_gpu = torch.cuda.device_count()
+    train, dev, test = load_dataset(args, tokenizer, "nmt")
+    padding_idx = tokenizer.pad_token_id
+
+    train_batch = NMTBatchfier(args, train, batch_size=args.per_gpu_train_batch_size * n_gpu, maxlen=args.seq_len,
+                               padding_index=padding_idx, device="cuda")
+    dev_batch = NMTBatchfier(args, dev, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
+                             padding_index=padding_idx, device="cuda")
+    test_batch = NMTBatchfier(args, test, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
+                              padding_index=padding_idx, device="cuda")
+
+    return train_batch, dev_batch, test_batch
+
+
+def run(gpu, args):
+    # args = ExperimentArgument()
+    args.gpu = gpu
+    args.device = gpu
+    args.aug_ratio = 0.0
+    set_seed(args.seed)
+
+    print(args.__dict__)
+    pretrained_config = MBartConfig.from_pretrained(MBARTCLASS)
+
+    from util.data_builder import LMAP
+    if args.replace_vocab:
+        from tokenizers import SentencePieceBPETokenizer
+        from corpus_utils.bpe_mapper import CustomTEDTokenizer
+        # vocab_path = os.path.join(args.root, f"{args.src}-{args.trg}-custom")
+        custom_tokenizer = SentencePieceBPETokenizer.from_file(args.vocab_path, args.merges_path)
+        pretrained_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src],
+                                                                tgt_lang=LMAP[args.trg])
+        from corpus_utils.vocab_util import align_vocabularies
+
+        new_dict = align_vocabularies(pretrained_tokenizer, custom_tokenizer)
+
+        # tokenizer = SentencePieceBPETokenizer.(vocab_path)
+        # tokenizer.add_special_tokens([LMAP[args.src], LMAP[args.trg]])
+        special_map = {k: v for k, v in
+          zip(pretrained_tokenizer.additional_special_tokens, pretrained_tokenizer.additional_special_tokens_ids)}
+    else:
+        tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src], tgt_lang=LMAP[args.trg])
+
+    args.extended_vocab_size = 0
+
+    model = CustomMBart.from_pretrained(args.encoder_class)
+    train_gen, dev_gen, test_gen = get_batchfier(args, tokenizer)
+
+    if args.replace_vocab:
+        special_ids= [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
+        model.rearrange_embedding(new_dict,special_ids)
+
+    model.to("cuda")
+
+    trainer = get_trainer(args, model, train_gen, dev_gen, tokenizer)
+    best_dir = os.path.join(args.savename, "best_model")
+
+    if not os.path.isdir(best_dir):
+        os.makedirs(best_dir)
+
+    results = []
+
+    optimal_perplexity = 1000.0
+    not_improved = 0
+
+    if args.do_train:
+        for e in tqdm(range(0, args.n_epoch)):
+            print("Epoch : {0}".format(e))
+            trainer.train_epoch()
+            save_path = os.path.join(args.savename, "epoch_{0}".format(e))
+            if not os.path.isdir(save_path):
+                os.makedirs(save_path)
+
+            if args.evaluate_during_training:
+                accuracy, step_perplexity = trainer.test_epoch()
+                results.append({"eval_acc": accuracy, "eval_ppl": step_perplexity})
+
+                if optimal_perplexity > step_perplexity:
+                    optimal_perplexity = step_perplexity
+                    # if args.distributed_training:
+                    #     torch.save(model.module.state_dict(), os.path.join(best_dir, "best_model.bin"))
+                    # else:
+                    torch.save(model.state_dict(), os.path.join(best_dir, "best_model.bin"))
+                    print("Update Model checkpoints at {0}!! ".format(best_dir))
+                    not_improved = 0
+                else:
+                    not_improved += 1
+
+            if not_improved >= 10:
+                break
+
+        log_full_eval_test_results_to_file(args, config=pretrained_config, results=results)
+
+    if args.do_eval:
+        accuracy, macro_f1 = trainer.test_epoch()
+        descriptions = os.path.join(args.savename, "eval_results.txt")
+        writer = open(descriptions, "w")
+        writer.write("accuracy: {0:.4f}, macro f1 : {1:.4f}".format(accuracy, macro_f1) + "\n")
+        writer.close()
+
+    if args.do_test:
+        # original_tokenizer = MBart50Tokenizer.from_pretrained(args.encoder_class)
+        # args.aug_word_length = len(tokenizer) - len(original_tokenizer)
+        # trainer.test_batchfier = test_gen
+        from util.evaluator import LMEvaluator
+
+        if args.model_path_list == "":
+            raise EnvironmentError("require to clarify the argment of model_path")
+
+        model_path = [model_path for model_path in args.model_path_list][0]
+
+        state_dict = torch.load(os.path.join(model_path, "best_model", "best_model.bin"))
+        model.load_state_dict(state_dict)
+
+        results = []
+        evaluator = LMEvaluator(args, model, args.nprefix, args.temperature)
+
+        if args.model_path_list == "":
+            raise EnvironmentError("require to clarify the argment of model_path")
+
+        output = evaluator.generate_epoch(test_gen)
+        pd.to_pickle(output, args.test_file)
+
+        # log_full_test_results_to_file(args, config=pretrained_config)
+
+
+if __name__ == "__main__":
+
+    args = NMTArgument()
+    args.ngpus_per_node = torch.cuda.device_count()
+    args.world_size = args.ngpus_per_node
+
+    if args.distributed_training:
+        if args.ngpus_per_node < 2:
+            raise ValueError("Require ngpu>=2")
+
+        mp.spawn(run, nprocs=args.ngpus_per_node, args=(args,))
+    else:
+        run("cuda", args)
