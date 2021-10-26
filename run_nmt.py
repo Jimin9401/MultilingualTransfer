@@ -127,7 +127,6 @@ def run(gpu, args):
                        zip(pretrained_tokenizer.additional_special_tokens, pretrained_tokenizer.additional_special_tokens_ids)}
         special_ids= [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
         args.new_special_src_id = len(new_dict)
-
         args.new_special_trg_id = len(new_dict) + 1
         model.rearrange_token_embedding(new_dict,special_ids)
 
@@ -159,8 +158,8 @@ def run(gpu, args):
                 os.makedirs(save_path)
 
             if args.evaluate_during_training:
-                accuracy, step_perplexity = trainer.test_epoch()
-                results.append({"eval_acc": accuracy, "eval_ppl": step_perplexity})
+                loss, step_perplexity = trainer.test_epoch()
+                results.append({"eval_loss": loss, "eval_ppl": step_perplexity})
 
                 if optimal_perplexity > step_perplexity:
                     optimal_perplexity = step_perplexity
@@ -173,7 +172,7 @@ def run(gpu, args):
                 else:
                     not_improved += 1
 
-            if not_improved >= 10:
+            if not_improved >= 5:
                 break
 
         log_full_eval_test_results_to_file(args, config=pretrained_config, results=results)
