@@ -1,4 +1,4 @@
-from util.trainer import LMTrainer, NMTTrainer
+from util.trainer import NMTTrainer
 from util.data_builder import load_dataset
 from util.args import NMTArgument
 from tqdm import tqdm
@@ -109,8 +109,6 @@ def run(gpu, args):
 
     if args.replace_vocab:
         from tokenizers import SentencePieceBPETokenizer
-        args.vocab_path
-
         vocab_json_name = args.vocab_path + f"/{args.src}-{args.trg}-vocab.json"
         merge_name = args.vocab_path + f"/{args.src}-{args.trg}-merges.txt"
 
@@ -124,14 +122,17 @@ def run(gpu, args):
 
         new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer)
         special_map = {k: v for k, v in
-                       zip(pretrained_tokenizer.additional_special_tokens, pretrained_tokenizer.additional_special_tokens_ids)}
-        special_ids= [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
+                       zip(pretrained_tokenizer.additional_special_tokens,
+                           pretrained_tokenizer.additional_special_tokens_ids)}
+        special_ids = [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
         args.new_special_src_id = len(new_dict)
         args.new_special_trg_id = len(new_dict) + 1
-        model.rearrange_token_embedding(new_dict,special_ids)
+        model.rearrange_token_embedding(new_dict, special_ids)
 
     else:
-        deployed_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src], tgt_lang=LMAP[args.trg])
+        special_ids = [LMAP[args.src], LMAP[args.trg]]
+        deployed_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src],
+                                                              tgt_lang=LMAP[args.trg])
 
     args.extended_vocab_size = 0
     train_gen, dev_gen, test_gen = get_batchfier(args, deployed_tokenizer)
@@ -188,24 +189,39 @@ def run(gpu, args):
         # original_tokenizer = MBart50Tokenizer.from_pretrained(args.encoder_class)
         # args.aug_word_length = len(tokenizer) - len(original_tokenizer)
         # trainer.test_batchfier = test_gen
-        from util.evaluator import LMEvaluator
+        from util.evaluator import NMTEvaluator
+        model = CustomMBart.from_pretrained(args.encoder_class)
+        if args.replace_vocab:
+            model.resize_token_embeddings(len(new_dict) + 2)
+            model.final_logits_bias.data = torch.zeros([1, 250054])
 
-        if args.model_path_list == "":
-            raise EnvironmentError("require to clarify the argment of model_path")
+        model.to(args.gpu)
 
-        model_path = [model_path for model_path in args.model_path_list][0]
+        state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "best_model", "best_model.bin"))
 
-        state_dict = torch.load(os.path.join(model_path, "best_model", "best_model.bin"))
         model.load_state_dict(state_dict)
+        if args.replace_vocab:
+            shape = model.final_logits_bias.data.shape
+            model.final_logits_bias.data = torch.zeros(shape)  # we remove final logit bias when training
 
-        results = []
-        evaluator = LMEvaluator(args, model, args.nprefix, args.temperature)
+        if args.replace_vocab:
+            trg_id = len(new_dict) + 1
+        else:
 
-        if args.model_path_list == "":
-            raise EnvironmentError("require to clarify the argment of model_path")
+            idx=deployed_tokenizer.additional_special_tokens.index(LMAP[args.trg])
+            special_ids = deployed_tokenizer.additional_special_tokens_ids
+            trg_id =special_ids[idx]
+
+        evaluator = NMTEvaluator(args, model, tokenizer=deployed_tokenizer, trg_id=trg_id)
+
+        if not os.path.isdir(args.test_file):
+            os.makedirs(args.test_file)
 
         output = evaluator.generate_epoch(test_gen)
-        pd.to_pickle(output, args.test_file)
+        if args.beam:
+            pd.to_pickle(output, os.path.join(args.test_file, "result-beam.pkl"))
+        else:
+            pd.to_pickle(output, os.path.join(args.test_file, "result-greedy.pkl"))
 
         # log_full_test_results_to_file(args, config=pretrained_config)
 

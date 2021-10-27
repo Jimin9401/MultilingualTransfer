@@ -6,8 +6,10 @@ echo $PYTHONPATH
 
 #dmis-lab/biobert-base-cased-v1.1 allenai/scibert_scivocab_uncased nfliu/scibert_basevocab_uncased
 
-
+for lang in ko ja tr fi
+do
 python gen_custom_tokenizer.py \
   --root data \
   --src en \
-  --trg ko ;
+  --trg $lang ;
+done

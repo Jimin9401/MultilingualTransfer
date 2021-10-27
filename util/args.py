@@ -226,7 +226,13 @@ class NMTArgument:
         parser.add_argument("--do_eval", action="store_true")
         parser.add_argument("--evaluate_during_training", action="store_true")
         parser.add_argument("--do_test", action="store_true")
+        parser.add_argument("--beam", action="store_true")
+        parser.add_argument("--top_k", type=int, default=5)
+
         parser.add_argument("--checkpoint_dir", default="checkpoints", type=str)
+        parser.add_argument("--test_dir", default="test", type=str)
+
+
         parser.add_argument("--encoder_class",
                             choices=["facebook/mbart-large-50"], default="facebook/mbart-large-50")
         parser.add_argument("--max_train_steps", default=None, type=int)
@@ -234,10 +240,12 @@ class NMTArgument:
                             choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant",
                                      "constant_with_warmup"])
 
+
         parser.add_argument("--num_warmup_steps", type=int, default=0,
                             help="Number of steps for the warmup in the lr scheduler.")
         parser.add_argument("--replace_vocab", action="store_true")
         parser.add_argument("--vocab_size", type=int, default=50000)
+        parser.add_argument("--checkpoint_name_for_test", type=str, default="")
 
         return parser
 
@@ -249,5 +257,11 @@ class NMTArgument:
         self.data["vocab_path"] = os.path.join(self.data["root"],
                                                f"{self.data['src']}-{self.data['trg']}-{self.data['vocab_size']}")
 
+        if self.data["do_test"]:
+            self.data["test_file"]=os.path.join(self.data["test_dir"],f"nmt-{self.data['src']}-{self.data['trg']}")
+            if self.data["checkpoint_name_for_test"]=="":
+                raise ValueError("Specify checkpoint name")
+            if self.data["replace_vocab"]:
+                self.data["test_file"] += "-replace"
         if self.data["replace_vocab"]:
             self.data["savename"] += "-replace"

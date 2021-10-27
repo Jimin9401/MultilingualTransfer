@@ -1,5 +1,5 @@
-from transformers import MBartForConditionalGeneration
-from transformers.models.mbart import MBartForConditionalGeneration, MBartConfig
+from transformers import MBartForConditionalGeneration, MBartConfig
+from transformers.models.mbart import MBartForConditionalGeneration
 from fairseq.models.transformer import transformer_wmt_en_de
 
 # from transformers.modeling_bart import BartForConditionalGeneration
@@ -116,6 +116,8 @@ class CustomMBart(MBartForConditionalGeneration):
 
     def rearrange_token_embedding(self, new_dict, special_ids: list):
         new_weight = torch.randn([len(new_dict) + 2, self.config.hidden_size])
+        # new_bias = torch.randn([1, len(new_dict) + 2])
+
         pretrained_word_embedding = self.model.encoder.embed_tokens.weight.data
 
         src_id, trg_id = special_ids
