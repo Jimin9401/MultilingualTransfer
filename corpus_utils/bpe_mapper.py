@@ -127,8 +127,10 @@ class CustomTEDTokenizer(CustomTokenizer):
         # txt_path = os.path.join(self.dir_path, self.prefix, "for_corpus.txt")
         # self.encoder.train(txt_path, vocab_size=self.vocab_size, min_frequency=10) # occur error
 
-        self.encoder.train_from_iterator(self.textlines, vocab_size=self.vocab_size, min_frequency=10,
-                                         special_tokens=["<unk>", "<pad>"])
+        self.encoder.train_from_iterator(self.textlines, vocab_size=self.vocab_size, min_frequency=2,
+                                         special_tokens=["<unk>", "<pad>", "<eos>"],
+                                         initial_alphabet=['[', '.', '?', '(', ')', '!', '@', '#', '$', '%', '^', '&',
+                                                           '*', '_', '+', '-', '/', ',', ']'])
 
         if not os.path.isdir(self.src_dir):
             os.makedirs(self.src_dir)
