@@ -1,0 +1,5 @@
+torch==1.8.0
+fairseq
+wandb
+transformers==4.10.2
+tokenizer==0.10.2
