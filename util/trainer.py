@@ -146,8 +146,7 @@ class LMTrainer(Trainer):
                 preds = preds.view(-1)
                 step_loss += loss.item()
                 pbar_cnt += 1
-            # print(preds.shape)
-            # print(gt.shape)
+
             true_buff.append(gt.view(-1).tolist())
             eval_buff.append(preds.view(-1).tolist())
             score = torch.mean((preds.view(-1) == gt.view(-1)).to(torch.float))
@@ -232,17 +231,17 @@ class NMTTrainer(Trainer):
                         step_loss / (self.update_step * pbar_cnt), ppl,
                         n_bar), )
                 pbar.update()
-                # if pbar_cnt == 100:
-                #     pbar, n_bar, pbar_cnt, step_loss, acc = reset_pbar(pbar, n_bar)
+            if pbar_cnt % 50==0:
+                wandb.log({
+                    "Train perplexity": math.exp(loss.item()),
+                    "Train Loss": loss.item()})
+
 
         pbar.close()
 
     def test_epoch(self):
         model = self.model
         batchfier = self.test_batchfier
-
-        if self.args.dataset == "bio_ner":
-            batchfier.collate = batchfier.collate_ner
 
         if isinstance(self.criteria, tuple):
             _, criteria = self.criteria
@@ -278,5 +277,28 @@ class NMTTrainer(Trainer):
             pbar.update()
         pbar.close()
 
+        wandb.log({
+            "Test perplexity": math.exp(step_loss / pbar_cnt),
+            "Test Loss": step_loss / pbar_cnt})
 
         return step_loss / pbar_cnt,  math.exp(step_loss / pbar_cnt)
+
+
+
+import wandb
+
+
+def test(model, device, test_loader):
+    model.eval()
+    test_loss = 0
+    correct = 0
+
+    example_images = []
+
+    test_loss /= len(test_loader.dataset)
+
+
+    wandb.log({
+        "Examples": example_images,
+        "Test PPL": 100. * correct / len(test_loader.dataset),
+        "Test Loss": test_loss})

@@ -3,6 +3,7 @@ import os
 import json
 import pandas as pd
 from tqdm import tqdm
+import re
 
 import logging
 import csv
@@ -81,9 +82,9 @@ class CustomTokenizer:
 
 
 class CustomTEDTokenizer(CustomTokenizer):
-    def __init__(self, args, dir_path, vocab_size, encoder_class,pretokenizer=None):
+    def __init__(self, args, dir_path, vocab_size, encoder_class, pretokenizer=None):
         super(CustomTEDTokenizer, self).__init__(args, dir_path, f"{args.src}-{args.trg}", vocab_size, encoder_class)
-        self.pretokenizer=pretokenizer
+        self.pretokenizer = pretokenizer
 
     def _csv_to_txt(self):
 
@@ -103,27 +104,36 @@ class CustomTEDTokenizer(CustomTokenizer):
         textlines = []
 
         for i, row in df.iterrows():
+            src_sent = row[self.args.src].strip().replace("\n", "")
+            trg_sent = row[self.args.trg].strip().replace("\n", "")
 
-            if self.pretokenizer is None:
-                textlines.append(row[self.args.src].strip().replace("\n",""))
-                textlines.append(row[self.args.trg].strip().replace("\n",""))
-            else:
-                textlines.append(row[self.args.src].strip().replace("\n",""))
-                textlines.append(row[self.args.trg].strip().replace("\n",""))
+            pt = r"[.?()!@#$%^&*_+-/,]"
+            # pt='[-=+,#/\?:^$.@*\"¡Ø~&%¤ý!¡»\\¡®|\(\)\[\]\<\>`\'¡¦¡·]'
 
-        self.textlines=textlines
+            src_sent = re.sub(pt, '', src_sent)
+            trg_sent = re.sub(pt, '', trg_sent)
+            textlines.append(src_sent)
+            textlines.append(trg_sent)
+            # else:
+            #     textlines.append(row[self.args.src].strip().replace("\n",""))
+            #     textlines.append(row[self.args.trg].strip().replace("\n",""))
+
+        self.textlines = textlines
         # for textline in tqdm(textlines):
         #     f.write(textline+"\n")
 
     def train(self):
         self._csv_to_txt()
-        txt_path = os.path.join(self.dir_path, self.prefix, "for_corpus.txt")
+        # txt_path = os.path.join(self.dir_path, self.prefix, "for_corpus.txt")
         # self.encoder.train(txt_path, vocab_size=self.vocab_size, min_frequency=10) # occur error
 
-        self.encoder.train_from_iterator(self.textlines,vocab_size=self.vocab_size,min_frequency=10)
+        self.encoder.train_from_iterator(self.textlines, vocab_size=self.vocab_size, min_frequency=2,
+                                         special_tokens=["<unk>", "<pad>", "<eos>"],
+                                         initial_alphabet=['[', '.', '?', '(', ')', '!', '@', '#', '$', '%', '^', '&',
+                                                           '*', '_', '+', '-', '/', ',', ']'])
 
         if not os.path.isdir(self.src_dir):
-           os.makedirs(self.src_dir)
+            os.makedirs(self.src_dir)
 
         self.encoder.save_model(directory=self.src_dir, prefix=f"{self.args.src}-{self.args.trg}")
 
@@ -136,7 +146,7 @@ class CustomTEDTokenizer(CustomTokenizer):
         self.dir_path = dir_path
 
         self.src_dir = self.vocab_path
-        base_name = os.path.join(self.src_dir,)
+        base_name = os.path.join(self.src_dir, )
         # vocab_txt_name = base_name + '-vocab.txt'
         vocab_json_name = base_name + f"/{self.args.src}-{self.args.trg}-vocab.json"
         merge_name = base_name + f"/{self.args.src}-{self.args.trg}-merges.txt"

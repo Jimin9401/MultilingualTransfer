@@ -1,25 +1,27 @@
 
 Data=ted # specify dataset
-NGPU=7
-CHECKPOINT=./checkpoints # specify checkpoint
+NGPU=6
+CHECKPOINT=./checkpoints_freeze # specify checkpoint
 
+for lang in tr
+do
 CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
   --dataset $Data \
   --root data \
   --do_train \
   --src en \
-  --trg fi \
+  --trg $lang \
   --evaluate_during_training \
   --lr 5.0e-5 \
   --seed 1994 \
-  --per_gpu_train_batch_size 4 \
+  --per_gpu_train_batch_size 16 \
   --per_gpu_eval_batch_size 8 \
-  --gradient_accumulation_step 4 \
+  --gradient_accumulation_step 1 \
   --mixed_precision \
-  --n_epoch 10 \
   --replace_vocab \
+  --n_epoch 10 \
   --checkpoint_dir $CHECKPOINT ;
-
+done
 
 #CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
 #  --dataset $Data \

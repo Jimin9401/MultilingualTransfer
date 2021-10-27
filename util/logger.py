@@ -52,14 +52,14 @@ def log_full_eval_test_results_to_file(args, config, results):
                     if best_ppl < value:
                         best_ppl = value
 
-                if key == 'eval_acc':
+                if key == 'eval_loss':
                     if best_acc < value:
                         best_acc = value
 
             writer.write(
                 "-------------------------------------------------------\n")
 
-        writer.write("best ppl : {0}\n best acc : {1}".format(best_ppl, best_acc))
+        writer.write("best ppl : {0}\n best loss : {1}".format(best_ppl, best_acc))
 
 
 def log_full_test_results_to_file(args, config):

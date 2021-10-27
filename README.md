@@ -21,5 +21,10 @@ CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
   --n_epoch 10 \
   --checkpoint_dir $CHECKPOINT ;
 
+
+ 
+
 ````
+
+Download data in /home/nas2_userG/jiminhong/projects/reassemble_vocab/data/ted2020.tsv.gz
 

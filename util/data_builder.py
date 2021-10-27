@@ -50,18 +50,19 @@ def load_dataset(args, tokenizer, task="nmt"):
         dev.to_csv(os.path.join(pairwise_cache, "dev.csv"), index=False, encoding='utf8')
         test.to_csv(os.path.join(pairwise_cache, "test.csv"), index=False, encoding='utf8')
 
-        train_pairs = get_pairs_from_multilingual(train, src=args.src, trg=args.trg)
-        train_examples = convert_data_to_examples(args, tokenizer, train_pairs, "train",replaced=args.replace_vocab)
-        pd.to_pickle(train_examples, os.path.join(pairwise_cache, "train.pkl"))
 
         dev_pairs = get_pairs_from_multilingual(dev, src=args.src, trg=args.trg)
         dev_examples = convert_data_to_examples(args, tokenizer, dev_pairs, "dev",replaced=args.replace_vocab)
         pd.to_pickle(dev_examples, os.path.join(pairwise_cache, "dev.pkl"))
 
-        test_pairs = get_pairs_from_multilingual(train, src=args.src, trg=args.trg)
+
+        test_pairs = get_pairs_from_multilingual(test, src=args.src, trg=args.trg)
         test_examples = convert_data_to_examples(args, tokenizer, test_pairs,"test", replaced=args.replace_vocab)
         pd.to_pickle(test_examples, os.path.join(pairwise_cache, "test.pkl"))
 
+        train_pairs = get_pairs_from_multilingual(train, src=args.src, trg=args.trg)
+        train_examples = convert_data_to_examples(args, tokenizer, train_pairs, "train",replaced=args.replace_vocab)
+        pd.to_pickle(train_examples, os.path.join(pairwise_cache, "train.pkl"))
 
     else:
         train_examples = pd.read_pickle(os.path.join(pairwise_cache, "train.pkl"))
@@ -79,20 +80,30 @@ def get_pairs_from_multilingual(df: pd.DataFrame, src, trg):
 
 
 from tqdm import tqdm
-
+from collections import Counter
 def convert_data_to_examples(args, tokenizer: MBart50Tokenizer, dataset, type="train", replaced=False):
     examples = []
     print(replaced)
+    res=[]
+    cc=Counter()
     for idx, (src, trg) in tqdm(enumerate(zip(dataset["src"], dataset["trg"]))):
         if replaced:
-            src_ids = [args.new_special_src_id] + tokenizer.encode(src).ids
-            trg_ids = [args.new_special_trg_id] + tokenizer.encode(trg).ids
+            src_ids = [args.new_special_src_id] + tokenizer.encode(src).ids+[2]
+            trg_ids = [args.new_special_trg_id] + tokenizer.encode(trg).ids+[2]
 
         else:
             src_ids = tokenizer.encode(src)
             with tokenizer.as_target_tokenizer():
                 trg_ids = tokenizer.encode(trg)
 
+        cc.update(src_ids)
+        cc.update(trg_ids)
+
         examples.append(NMTExample(guid=f"{type}-{idx}", input_ids=src_ids, trg_ids=trg_ids))
 
+    number_of_total= sum(cc.values())
+    if args.replace_vocab:
+        print(f"UNK word rate : {cc[0]/number_of_total}")
+    else:
+        print(f"UNK word rate : {cc[3] / number_of_total}")
     return examples
