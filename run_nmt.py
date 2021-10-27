@@ -41,9 +41,9 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
     # optimizer = AdamW(model.model.shared.parameters(), args.lr, weight_decay=args.weight_decay)
 
     if args.initial_freeze:
-        optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
-    else:
         optimizer = torch.optim.AdamW(model.model.shared.parameters(), args.lr, weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
 
     if args.mixed_precision:
         print('mixed_precision')
