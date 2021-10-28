@@ -19,7 +19,7 @@ def load_dataset(args, tokenizer, task="nmt"):
     sampled_dataset_path = os.path.join(args.root, f"ted2020-all-{args.src}-{args.trg}.tsv.gz")
 
     cache_path = os.path.join(args.root, "cache")
-    pairwise_cache = os.path.join(cache_path, f"{args.src}-{args.trg}-all")
+    pairwise_cache = os.path.join(cache_path, f"{args.src}-{args.trg}-all-{args.vocab_size}")
 
     if args.replace_vocab:
         pairwise_cache += "-replaced"
@@ -81,6 +81,7 @@ def get_pairs_from_multilingual(df: pd.DataFrame, src, trg):
 
 from tqdm import tqdm
 from collections import Counter
+
 def convert_data_to_examples(args, tokenizer: MBart50Tokenizer, dataset, type="train", replaced=False):
     examples = []
     print(replaced)

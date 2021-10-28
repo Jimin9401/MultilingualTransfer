@@ -3,3 +3,5 @@ fairseq
 wandb
 transformers==4.10.2
 tokenizer==0.10.2
+unidic-lite
+mecab-ko

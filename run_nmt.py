@@ -137,7 +137,7 @@ def run(gpu, args):
 
     else:
         special_ids = [LMAP[args.src], LMAP[args.trg]]
-        deployed_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src],
+        deployed_tokenizer = MBart50Tokenizer.from_pretrained(args.encoder_class, src_lang=LMAP[args.src],
                                                               tgt_lang=LMAP[args.trg])
 
     args.extended_vocab_size = 0
@@ -257,7 +257,7 @@ if __name__ == "__main__":
         project_name += "-embedding_only"
 
 
-    wandb.init(project=project_name, reinit=True)
+    wandb.init(project=project_name,name=f"{args.encoder_class}", reinit=True)
     wandb.config.update(args)
 
     if args.distributed_training:

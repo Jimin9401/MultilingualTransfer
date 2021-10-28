@@ -3,12 +3,16 @@ import argparse
 import os
 import pandas as pd
 import glob
+import torch
+from tokenizers import SentencePieceBPETokenizer
 
 
 def get_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--file_name', type=str)
+    parser.add_argument('--lang', type=str)
+
     parser.add_argument('--str_version', action="store_true")
 
     return parser.parse_args()
@@ -30,19 +34,33 @@ def remove_padding(decoded, eos_index=2):
     return res
 
 
+import torch.nn.functional as F
+
+
+# for net-based metric
+def similarity(embeddings_1, embeddings_2):
+    normalized_embeddings_1 = F.normalize(embeddings_1, p=2)
+    normalized_embeddings_2 = F.normalize(embeddings_2, p=2)
+    return torch.matmul(
+        normalized_embeddings_1, normalized_embeddings_2.transpose(0, 1)
+    )
+
+
 def main():
     args = get_args()
     print(os.path.basename(args.folderpath))
     df = pd.read_pickle(args.file_name)
 
     # df = pd.read_pickle(filename)
-    predicts = df['decoded_predict'].to_list()
-    predicts = [predict[2:] for predict in predicts]
-
+    predicts = [sent[2:] for sent in df["decoded_predict"].to_list()]
     gts = df['decoded_true'].to_list()
-    b = bleu_upto(gts, predicts, 5)
+    custom_tokenizer = SentencePieceBPETokenizer(f"../data/en-{args.lang}-50000/en-{args.lang}-vocab.json",
+                                                 f"../data/en-{args.lang}-50000/en-{args.lang}-merges.txt")
 
+    # reference based metric
+    bleu=corpuswise_bleu(predicts,gts,)
 
+    print(bleu)
 
 
 
