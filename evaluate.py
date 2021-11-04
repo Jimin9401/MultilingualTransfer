@@ -57,8 +57,10 @@ def main():
     custom_tokenizer = SentencePieceBPETokenizer(f"../data/en-{args.lang}-50000/en-{args.lang}-vocab.json",
                                                  f"../data/en-{args.lang}-50000/en-{args.lang}-merges.txt")
 
+    mbart_tokenizer = MBart50Tokenizer.from_pretrained("facebook/mbart-large-50")
     # reference based metric
-    bleu=corpuswise_bleu(predicts,gts,)
+
+    bleu=corpuswise_bleu(predicts,gts,custom_tokenizer)
 
     print(bleu)
 

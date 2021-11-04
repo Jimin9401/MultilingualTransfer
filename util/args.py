@@ -236,7 +236,7 @@ class NMTArgument:
         parser.add_argument("--test_dir", default="test", type=str)
 
         parser.add_argument("--encoder_class",
-                            choices=["facebook/mbart-large-50", "facebook/mbart-50-large-many-to-many"
+                            choices=["facebook/mbart-large-50", "facebook/mbart-large-50-many-to-many-mmt"
                                      ], default="facebook/mbart-large-50")
         parser.add_argument("--max_train_steps", default=None, type=int)
         parser.add_argument("--lr_scheduler_type", default="linear", help="The scheduler type to use.",
@@ -246,6 +246,8 @@ class NMTArgument:
         parser.add_argument("--num_warmup_steps", type=int, default=0,
                             help="Number of steps for the warmup in the lr scheduler.")
         parser.add_argument("--replace_vocab", action="store_true")
+        parser.add_argument("--initialize_all", action="store_true")
+
         parser.add_argument("--vocab_size", type=int, default=50000)
         parser.add_argument("--checkpoint_name_for_test", type=str, default="")
 
@@ -267,4 +269,4 @@ class NMTArgument:
             if self.data["replace_vocab"]:
                 self.data["test_file"] += "-replace"
         if self.data["replace_vocab"]:
-            self.data["savename"] += "-replace"
+            self.data["savename"] += f"-replace-{self.data['vocab_size']}"

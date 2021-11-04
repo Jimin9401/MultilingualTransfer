@@ -91,7 +91,9 @@ class NMTBatchfier(Base_Batchfier):
         for example in self.df:
             src = example.input_ids[:self.maxlen]
             trg = example.trg_ids[:self.maxlen]
+
             yield src, trg
+            # yield trg, src
 
     def __len__(self):
         return self.num_buckets

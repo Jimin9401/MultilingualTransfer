@@ -34,7 +34,7 @@ def remove_padding(decoded, eos_index=2):
     return res
 
 
-def corpuswise_bleu(tokenized_predict, tokenized_gt, tokenizer: MBart50Tokenizer, trg="ko"):
+def corpuswise_bleu(tokenized_predict, tokenized_gt, tokenizer: MBart50Tokenizer, trg="ko",n_gram=4):
     tokenized_predict = remove_padding(tokenized_predict, 2)  # remove paddings
     tokenized_gt = remove_padding(tokenized_gt, 2)
 
@@ -54,7 +54,7 @@ def corpuswise_bleu(tokenized_predict, tokenized_gt, tokenizer: MBart50Tokenizer
         for gt in detokenized_gt:
             res_gt.append([i[0] for i in mecab.pos(gt)])
 
-        return bleu_upto(res_gt,res_predict,3)
+        return bleu_upto(res_gt,res_predict,n_gram)
 
     elif trg=="ja":
         import MeCab
@@ -65,10 +65,10 @@ def corpuswise_bleu(tokenized_predict, tokenized_gt, tokenizer: MBart50Tokenizer
         for gt in detokenized_gt:
             res_gt.extend([wakati.parse(gt).split()])
 
-        return bleu_upto(res_gt, res_predict, 3)
+        return bleu_upto(res_gt, res_predict, n_gram)
 
     else:
-        from sacrebleu import BLEU
+        from sacrebleu.metrics import BLEU
         bleu=BLEU()
 
-        return bleu.corpus_score(detokenized_predict, [detokenized_gt],)
+        return bleu.corpus_score(detokenized_predict, [detokenized_gt])

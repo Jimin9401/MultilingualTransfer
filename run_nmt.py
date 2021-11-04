@@ -126,7 +126,10 @@ def run(gpu, args):
                                                                 tgt_lang=LMAP[args.trg])
         from corpus_utils.vocab_util import align_vocabularies
 
-        new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer)
+        custom_vocab = deployed_tokenizer.get_vocab()
+        al_idx= custom_vocab["▁"]
+
+        new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer,al_idx)
         special_map = {k: v for k, v in
                        zip(pretrained_tokenizer.additional_special_tokens,
                            pretrained_tokenizer.additional_special_tokens_ids)}
@@ -145,6 +148,9 @@ def run(gpu, args):
 
     model.to("cuda")
     wandb.watch(model)
+    if args.initialize_all:
+        model.init_weights()
+
     trainer = get_trainer(args, model, train_gen, dev_gen, deployed_tokenizer)
     best_dir = os.path.join(args.savename, "best_model")
 
@@ -228,6 +234,7 @@ def run(gpu, args):
             idx=deployed_tokenizer.additional_special_tokens.index(LMAP[args.trg])
             special_ids = deployed_tokenizer.additional_special_tokens_ids
             trg_id =special_ids[idx]
+            print(trg_id)
 
         evaluator = NMTEvaluator(args, model, tokenizer=deployed_tokenizer, trg_id=trg_id)
 

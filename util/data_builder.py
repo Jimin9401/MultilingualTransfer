@@ -87,9 +87,34 @@ def convert_data_to_examples(args, tokenizer: MBart50Tokenizer, dataset, type="t
     print(replaced)
     res=[]
     cc=Counter()
+
+    from tokenizers.pre_tokenizers import Whitespace
+    eng_pre_tokenizer= Whitespace()
+
+    # src_sent = " ".join([i[0] for i in eng_pre_tokenizer.pre_tokenize_str(src_sent)])
+
+    if args.trg=="ko":
+        import mecab
+        pre_tokenizer = mecab.MeCab()
+    elif args.trg=="ja":
+        import MeCab
+        pre_tokenizer = MeCab.Tagger("-Owakati")
+        pre_tokenizer.morphs = pre_tokenizer.parse
+    else:
+        pre_tokenizer = None
+
     for idx, (src, trg) in tqdm(enumerate(zip(dataset["src"], dataset["trg"]))):
         if replaced:
+
+            src = " ".join([i[0] for i in eng_pre_tokenizer.pre_tokenize_str(src)])
             src_ids = [args.new_special_src_id] + tokenizer.encode(src).ids+[2]
+            if pre_tokenizer:
+                if args.trg=="ko":
+                    trg = " ".join(pre_tokenizer.morphs(trg))
+                elif args.trg=="ja":
+                    trg = " ".join(pre_tokenizer.morphs(trg).split())
+                else:
+                    raise NotImplementedError
             trg_ids = [args.new_special_trg_id] + tokenizer.encode(trg).ids+[2]
 
         else:
