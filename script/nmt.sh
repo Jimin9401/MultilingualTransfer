@@ -1,10 +1,32 @@
 
 Data=ted # specify dataset
-NGPU=6
-CHECKPOINT=./checkpoints_freeze # specify checkpoint
+NGPU=0
+CHECKPOINT=./checkpoints # specify checkpoint
+#EC=facebook/mbart-large-50
+EC=facebook/mbart-large-50-many-to-many-mmt
 
-for lang in tr
+
+for lang in ko
 do
+CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
+  --dataset $Data \
+  --root data \
+  --do_train \
+  --src en \
+  --trg $lang \
+  --vocab_size 30000 \
+  --evaluate_during_training \
+  --lr 3.0e-5 \
+  --seed 1994 \
+  --per_gpu_train_batch_size 16 \
+  --per_gpu_eval_batch_size 8 \
+  --gradient_accumulation_step 1 \
+  --mixed_precision \
+  --encoder_class $EC \
+  --replace_vocab \
+  --n_epoch 10 \
+  --checkpoint_dir $CHECKPOINT ;
+
 CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
   --dataset $Data \
   --root data \
@@ -14,11 +36,10 @@ CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
   --evaluate_during_training \
   --lr 5.0e-5 \
   --seed 1994 \
-  --per_gpu_train_batch_size 16 \
+  --per_gpu_train_batch_size 4 \
   --per_gpu_eval_batch_size 8 \
-  --gradient_accumulation_step 1 \
+  --gradient_accumulation_step 4 \
   --mixed_precision \
-  --replace_vocab \
   --n_epoch 10 \
   --checkpoint_dir $CHECKPOINT ;
 done

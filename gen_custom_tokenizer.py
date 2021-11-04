@@ -1,14 +1,11 @@
 from util.args import TokenizerArgument
 import logging
 from tokenizers import SentencePieceBPETokenizer
-from corpus_utils.bpe_mapper import CustomTokenizer,CustomTEDTokenizer
-
+from corpus_utils.bpe_mapper import CustomTEDTokenizer
 
 VocabMap = {"en": "bert-base-uncased", "ko": "monologg/koelectra-base-v3-discriminator"}
 
-
 logging.basicConfig(level=logging.INFO)
-
 
 if __name__ == "__main__":
     args = TokenizerArgument()
@@ -16,11 +13,23 @@ if __name__ == "__main__":
     # trg_lang_path = VocabMap[args.trg]
 
     encoder_class = SentencePieceBPETokenizer
-    domain_tokenizer = CustomTEDTokenizer(args=args, dir_path=args.root, encoder_class=encoder_class,
-                                       vocab_size=args.vocab_size)
 
-    tokenizer=CustomTEDTokenizer(args=args, dir_path=args.root, encoder_class=encoder_class,
-                       vocab_size=args.vocab_size).encoder
+    if args.trg == "ko":
+        import mecab
+        pretokenizer = mecab.MeCab()
+    elif args.trg == "ja":
+        import MeCab
+        pretokenizer = MeCab.Tagger("-Owakati")
+        pretokenizer.morphs=pretokenizer.parse
+
+    else:
+        pretokenizer = None
+
+    domain_tokenizer = CustomTEDTokenizer(args=args, dir_path=args.root, encoder_class=encoder_class,
+                                          vocab_size=args.vocab_size,pretokenizer=pretokenizer)
+
+    tokenizer = CustomTEDTokenizer(args=args, dir_path=args.root, encoder_class=encoder_class,
+                                   vocab_size=args.vocab_size,pretokenizer=pretokenizer).encoder
     print(tokenizer)
 
 # if __name__ == "__main__":

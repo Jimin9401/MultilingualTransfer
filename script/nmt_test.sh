@@ -1,62 +1,29 @@
 
 Data=ted # specify dataset
-NGPU=1
-CHECKPOINT=./checkpoints_new # specify checkpoint
+NGPU=6
+CHECKPOINT=checkpoints # specify checkpoint
+EC=facebook/mbart-large-50-many-to-many-mmt
 
-#CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
-#  --dataset $Data \
-#  --root data \
-#  --do_test \
-#  --src en \
-#  --trg ja \
-#  --lr 5.0e-5 \
-#  --seed 1994 \
-#  --per_gpu_train_batch_size 4 \
-#  --per_gpu_eval_batch_size 8 \
-#  --gradient_accumulation_step 4 \
-#  --mixed_precision \
-#  --replace_vocab \
-#  --checkpoint_dir $CHECKPOINT \
-#  --checkpoint_name_for_test ./checkpoints/nmt-en-ja-replace ;
+S=20000
 
-
-#for lang in fi
-#do
-#  CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
-#    --dataset $Data \
-#    --root data \
-#    --do_test \
-#    --src en \
-#    --trg $lang \
-#    --lr 5.0e-5 \
-#    --seed 1994 \
-#    --per_gpu_train_batch_size 4 \
-#    --per_gpu_eval_batch_size 8 \
-#    --beam \
-#    --gradient_accumulation_step 4 \
-#    --mixed_precision \
-#    --checkpoint_dir $CHECKPOINT \
-#    --replace_vocab \
-#    --checkpoint_name_for_test ./checkpoints_new/nmt-en-$lang-replace ;
-#done
-
-
-for lang in ko ja
+for lang in ko
 do
   CUDA_VISIBLE_DEVICES=$NGPU python run_nmt.py \
     --dataset $Data \
     --root data \
+    --encoder_class $EC \
     --do_test \
     --src en \
+    --vocab_size $S \
     --trg $lang \
-    --lr 5.0e-5 \
-    --test_dir test_2 \
+    --lr 3.0e-5 \
+    --test_dir test_initial/$EC \
     --seed 1994 \
     --per_gpu_train_batch_size 4 \
     --per_gpu_eval_batch_size 8 \
     --gradient_accumulation_step 4 \
     --mixed_precision \
-    --checkpoint_dir $CHECKPOINT \
     --replace_vocab \
-    --checkpoint_name_for_test ./checkpoints_fix/nmt-en-$lang-replace;
+    --checkpoint_dir $CHECKPOINT \
+    --checkpoint_name_for_test ./$CHECKPOINT/$EC-en-$lang-replace-$S ;
 done

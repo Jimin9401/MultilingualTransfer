@@ -14,11 +14,15 @@ from tokenizers.models import BPE
 
 
 class CustomTokenizer:
-    def __init__(self, args, dir_path, dataset_name, vocab_size, encoder_class):
+    def __init__(self, args, dir_path, dataset_name, vocab_size, encoder_class, pretokenizer):
         self.args = args
         self.dir_path = dir_path
         self.prefix = dataset_name
         self.vocab_size = vocab_size
+        self.pretokenizer = pretokenizer
+        from tokenizers.pre_tokenizers import Whitespace
+        self.eng_pre_tokenizer = Whitespace()
+
         self.encoder = self.load_encoder(args, encoder_class, dir_path, dataset_name, vocab_size)
 
     def encode(self, text):
@@ -83,8 +87,11 @@ class CustomTokenizer:
 
 class CustomTEDTokenizer(CustomTokenizer):
     def __init__(self, args, dir_path, vocab_size, encoder_class, pretokenizer=None):
-        super(CustomTEDTokenizer, self).__init__(args, dir_path, f"{args.src}-{args.trg}", vocab_size, encoder_class)
+        super(CustomTEDTokenizer, self).__init__(args, dir_path, f"{args.src}-{args.trg}", vocab_size, encoder_class,
+                                                 pretokenizer)
         self.pretokenizer = pretokenizer
+
+
 
     def _csv_to_txt(self):
 
@@ -104,15 +111,25 @@ class CustomTEDTokenizer(CustomTokenizer):
         textlines = []
 
         for i, row in df.iterrows():
-            src_sent = row[self.args.src].strip().replace("\n", "")
-            trg_sent = row[self.args.trg].strip().replace("\n", "")
+            src_sent = row[self.args.src].replace("\n", "").strip()
+            trg_sent = row[self.args.trg].replace("\n", "").strip()
 
-            pt = r"[.?()!@#$%^&*_+-/,]"
-            # pt='[-=+,#/\?:^$.@*\"¡Ø~&%¤ý!¡»\\¡®|\(\)\[\]\<\>`\'¡¦¡·]'
+            # pt = r"[.?()!@#$%^&*_+-/,]"
+            # pt='[-=+,#/\?:^$.@*\"ï¿½ï¿½~&%ï¿½ï¿½!ï¿½ï¿½\\ï¿½ï¿½|\(\)\[\]\<\>`\'ï¿½ï¿½ï¿½ï¿½]'
 
-            src_sent = re.sub(pt, '', src_sent)
-            trg_sent = re.sub(pt, '', trg_sent)
+            # src_sent = re.sub(pt, '', src_sent)
+            # trg_sent = re.sub(pt, '', trg_sent)
+
+            src_sent = " ".join([i[0] for i in self.eng_pre_tokenizer.pre_tokenize_str(src_sent)])
+
             textlines.append(src_sent)
+
+            if self.pretokenizer:
+                if self.args.trg == "ko":
+                    trg_sent = " ".join(self.pretokenizer.morphs(trg_sent))
+                elif self.args.trg == "ja":
+                    trg_sent = " ".join(self.pretokenizer.morphs(trg_sent).split())
+
             textlines.append(trg_sent)
             # else:
             #     textlines.append(row[self.args.src].strip().replace("\n",""))
@@ -130,7 +147,12 @@ class CustomTEDTokenizer(CustomTokenizer):
         self.encoder.train_from_iterator(self.textlines, vocab_size=self.vocab_size, min_frequency=2,
                                          special_tokens=["<unk>", "<pad>", "<eos>"],
                                          initial_alphabet=['[', '.', '?', '(', ')', '!', '@', '#', '$', '%', '^', '&',
-                                                           '*', '_', '+', '-', '/', ',', ']'])
+                                                           '*', '_', '+', '-', '/', ',', ']','"',"'",","])
+
+        # self.encoder.train_from_iterator(self.textlines, vocab_size=self.vocab_size, min_frequency=2,
+        #                                  special_tokens=["<unk>", "<pad>", "<eos>"],
+        #                                  initial_alphabet=['[', '.', '?', '(', ')', '!', '@', '#', '$', '%', '^', '&',
+        #                                                    '*', '_', '+', '-', '/', ',', ']'])
 
         if not os.path.isdir(self.src_dir):
             os.makedirs(self.src_dir)

@@ -14,15 +14,16 @@ from transformers import MBart50Tokenizer
 #     return new_dict
 
 
-def align_vocabularies(source_tokenizer: MBart50Tokenizer, target_tokenizer: SentencePieceBPETokenizer):
+def align_vocabularies(source_tokenizer: MBart50Tokenizer, target_tokenizer: SentencePieceBPETokenizer,aligned_index):
     source_vocab = source_tokenizer.get_vocab()
     target_vocab = target_tokenizer.get_vocab()
 
     new_dict = {}
+     # = custom_vocab["▁"]
 
     for word, idx in target_vocab.items():
         original_ids = [source_vocab[i] for i in source_tokenizer.tokenize(word)]
-        if len(original_ids) > 1 and original_ids[0] == 6:
+        if len(original_ids) > 1 and original_ids[0] == aligned_index:
             original_ids = original_ids[1:]
         new_dict[idx] = original_ids
 
