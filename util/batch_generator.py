@@ -11,22 +11,22 @@ from torch.nn.utils.rnn import pad_sequence
 from typing import List, Optional, Union
 from .examples import NMTExample,CFExample
 
-
-class Dataset(Dataset):
-    def __init__(self, X, y):
-        """Reads source and target sequences from txt files."""
-        self.X = X
-        self.y = y
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        """Returns one data pair (source and target)."""
-        data = {}
-        data["X"] = self.X[index]
-        data["y"] = self.y[index]
-        return data
+#
+# class Dataset(Dataset):
+#     def __init__(self, X, y):
+#         """Reads source and target sequences from txt files."""
+#         self.X = X
+#         self.y = y
+#
+#     def __len__(self):
+#         return len(self.X)
+#
+#     def __getitem__(self, index):
+#         """Returns one data pair (source and target)."""
+#         data = {}
+#         data["X"] = self.X[index]
+#         data["y"] = self.y[index]
+#         return data
 
 
 class Base_Batchfier(IterableDataset):
@@ -85,8 +85,10 @@ class NMTBatchfier(Base_Batchfier):
                  padding_index=1, device="cuda"):
         super(NMTBatchfier, self).__init__(args, df, batch_size, maxlen, padding_index,device)
         self.num_buckets = len(self.df) // self.size + (len(self.df) % self.size != 0)
+        self.df = sorted(self.df, key=lambda x: (len(x.input_ids), len(x.trg_ids)), reverse=True)
 
-        print("total dataset size")
+        print(f"total dataset size : {len(self.df)}")
+
     def __iter__(self):
         for example in self.df:
             src = example.input_ids[:self.maxlen]
