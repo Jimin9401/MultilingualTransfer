@@ -1,6 +1,6 @@
 from util.trainer import NMTTrainer
 from util.data_builder import load_dataset
-from util.args import NMTArgument
+from util.args import NMTArgument,InitialArgument
 from tqdm import tqdm
 import pandas as pd
 import wandb
@@ -125,11 +125,10 @@ def run(gpu, args):
         pretrained_tokenizer = MBart50Tokenizer.from_pretrained(args.encoder_class, src_lang=LMAP[args.src],
                                                                 tgt_lang=LMAP[args.trg])
         from corpus_utils.vocab_util import align_vocabularies
+        # custom_vocab = deployed_tokenizer.get_vocab()
+        # al_idx= custom_vocab["▁"]
 
-        custom_vocab = deployed_tokenizer.get_vocab()
-        al_idx= custom_vocab["▁"]
-
-        new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer,al_idx)
+        new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer)
         special_map = {k: v for k, v in
                        zip(pretrained_tokenizer.additional_special_tokens,
                            pretrained_tokenizer.additional_special_tokens_ids)}
@@ -146,10 +145,16 @@ def run(gpu, args):
     args.extended_vocab_size = 0
     train_gen, dev_gen, test_gen = get_batchfier(args, deployed_tokenizer)
 
-    model.to("cuda")
-    wandb.watch(model)
     if args.initialize_all:
         model.init_weights()
+
+    if args.initialize_decoder:
+        model.model.decoder.layers = model.model.decoder.layers[12 - args.n_layer_of_decoder:]
+        for param in model.model.encoder.parameters():
+            param.requires_grad = False
+
+    model.to("cuda")
+    wandb.watch(model)
 
     trainer = get_trainer(args, model, train_gen, dev_gen, deployed_tokenizer)
     best_dir = os.path.join(args.savename, "best_model")
@@ -214,11 +219,21 @@ def run(gpu, args):
         # trainer.test_batchfier = test_gen
         from util.evaluator import NMTEvaluator
         model = CustomMBart.from_pretrained(args.encoder_class)
+
         if args.replace_vocab:
             model.resize_token_embeddings(len(new_dict) + 2)
             model.final_logits_bias.data = torch.zeros([1, 250054])
 
         model.to(args.gpu)
+        if args.initialize_decoder:
+            import random
+            # candidates = random.sample(range(1, 12), args.n_layer_of_decoder)
+            # print(candidates)
+            # model.model.decoder.layers = model.model.decoder.layers[candidates]
+            model.model.decoder.layers = model.model.decoder.layers[12 - args.n_layer_of_decoder:]
+
+            for param in model.model.encoder.parameters():
+                param.requires_grad = False
 
         state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "best_model", "best_model.bin"))
 
@@ -230,10 +245,9 @@ def run(gpu, args):
         if args.replace_vocab:
             trg_id = len(new_dict) + 1
         else:
-
-            idx=deployed_tokenizer.additional_special_tokens.index(LMAP[args.trg])
+            idx = deployed_tokenizer.additional_special_tokens.index(LMAP[args.trg])
             special_ids = deployed_tokenizer.additional_special_tokens_ids
-            trg_id =special_ids[idx]
+            trg_id = special_ids[idx]
             print(trg_id)
 
         evaluator = NMTEvaluator(args, model, tokenizer=deployed_tokenizer, trg_id=trg_id)
@@ -255,16 +269,18 @@ if __name__ == "__main__":
     args = NMTArgument()
     args.ngpus_per_node = torch.cuda.device_count()
     args.world_size = args.ngpus_per_node
-    project_name=f"{args.src}-{args.trg}"
+    project_name = f"{args.src}-{args.trg}"
 
     if args.replace_vocab:
-        project_name+="-replace_vocab"
+        project_name += "-replace_vocab"
 
     if args.initial_freeze:
         project_name += "-embedding_only"
 
+    if args.initialize_decoder:
+        project_name += "-initial_decoder"
 
-    wandb.init(project=project_name,name=f"{args.encoder_class}", reinit=True)
+    wandb.init(project=project_name, name=f"{args.encoder_class}", reinit=True)
     wandb.config.update(args)
 
     if args.distributed_training:

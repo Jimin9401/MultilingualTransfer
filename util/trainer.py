@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from torch.utils.data import IterableDataset, DataLoader
 import torch
+import torch.nn as nn
 import apex
 from model.losses import NTXentLoss, AlignLoss
 from model.classification_model import PretrainedTransformer
@@ -248,6 +249,11 @@ class NMTTrainer(Trainer):
         else:
             criteria = self.criteria
 
+        if self.args.mbart:
+            test_criteria = nn.CrossEntropyLoss(ignore_index=1)
+        else:
+            test_criteria = nn.CrossEntropyLoss(ignore_index=0)
+
         if isinstance(batchfier, IterableDataset):
             batchfier = DataLoader(dataset=batchfier,
                                    batch_size=batchfier.size,
@@ -267,7 +273,7 @@ class NMTTrainer(Trainer):
                 outputs = model(**inputs)  #
                 logits = outputs["logits"]
 
-                loss = self.criteria(logits.view(-1, logits.size(-1)), labels.view(-1))
+                loss = test_criteria(logits.view(-1, logits.size(-1)), labels.view(-1))
                 step_loss += loss.item()
                 pbar_cnt += 1
 
