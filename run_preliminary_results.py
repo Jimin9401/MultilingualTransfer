@@ -1,17 +1,14 @@
 from util.trainer import NMTTrainer
-from util.data_builder import load_dataset, get_ted_dataset
+from util.data_builder import load_dataset, get_ted_dataset, get_dataset
 from util.args import NMTArgument, InitialArgument
 from tqdm import tqdm
 import pandas as pd
 import wandb
-from transformers import AdamW, MBart50Tokenizer, MBartConfig
-import apex
+from transformers import AdamW, MBart50Tokenizer, MBartConfig, get_scheduler,AutoTokenizer, BertTokenizer
 from util.batch_generator import NMTBatchfier
 from model.nmt_model import CustomMBart
 import torch.multiprocessing as mp
-
-from transformers import get_scheduler
-
+import apex
 import torch.nn as nn
 import torch
 import random
@@ -23,8 +20,8 @@ logger = logging.getLogger(__name__)
 LANGDICT = {"ko": "monologg/koelectra-base-discriminator",
             "es": 'dccuchile/bert-base-spanish-wwm-cased',
             "fi": "TurkuNLP/bert-base-finnish-uncased-v1",
-            "ja": "cl-tohoku/bert-base-japanese-char",
-            "tr": "dbmdz/bert-base-turkish-uncased",
+            "ja": "cl-tohoku/bert-base-japanese",
+            "tr": "dbmdz/bert-base-turkish-cased",
             "id": "indolem/indobert-base-uncased"}
 
 
@@ -59,9 +56,9 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
 
     # criteria = nn.CrossEntropyLoss(ignore_index=1,label_smoothing=0.3
     if args.mbart:
-        criteria = nn.CrossEntropyLoss(ignore_index=1, label_smoothing=0.3)
+        criteria = nn.CrossEntropyLoss(ignore_index=1, label_smoothing=0.1)
     else:
-        criteria = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.3)
+        criteria = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id, label_smoothing=0.1)
 
     if args.max_train_steps is None:
         args.num_update_steps_per_epoch = train_batchfier.num_buckets
@@ -79,21 +76,40 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
 
     return trainer
 
+def create_shared_vocabulary(args,src_tokenizer,tgt_tokenizer):
+    custom_vocab_path = os.path.join(args.root, "vocab", f"{args.src}-{args.trg}")
+
+    src_vocab = src_tokenizer.get_vocab()
+    tgt_vocab = tgt_tokenizer.get_vocab()
+    tgt_tokenizer.save_pretrained(custom_vocab_path)
+
+
+    f = open(os.path.join(custom_vocab_path, "vocab.txt"), "a")
+    for key in src_vocab:
+        if key not in tgt_vocab:
+            f.write(key + "\n")
+    f.close()
+
+    tokenizer = BertTokenizer.from_pretrained(custom_vocab_path)
+
+    return tokenizer
 
 def get_batchfier(args, tokenizer: MBart50Tokenizer, class_of_dataset):
     n_gpu = torch.cuda.device_count()
     train, dev, test = get_ted_dataset(args, tokenizer, class_of_dataset)
+    # train, dev, test = get_dataset(args, tokenizer)
+
     if args.mbart:
         padding_idx = 1
     else:
-        padding_idx = 0
+        padding_idx = tokenizer.pad_token_id
 
     train_batch = NMTBatchfier(args, train, batch_size=args.per_gpu_train_batch_size * n_gpu, maxlen=args.seq_len,
                                padding_index=padding_idx, device="cuda")
     dev_batch = NMTBatchfier(args, dev, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
                              padding_index=padding_idx, device="cuda")
     test_batch = NMTBatchfier(args, test, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
-                              padding_index=padding_idx, device="cuda")
+                              padding_index=padding_idx, device="cuda",shuffle=False)
 
     return train_batch, dev_batch, test_batch
 
@@ -104,7 +120,6 @@ def run(gpu, args):
     args.device = gpu
     args.aug_ratio = 0.0
     set_seed(args.seed)
-
     print(args.__dict__)
 
     from util.data_builder import LMAP
@@ -114,23 +129,35 @@ def run(gpu, args):
                                                      tgt_lang=LMAP[args.trg])
         from util.dataset import ParallelDataset
         class_of_dataset = ParallelDataset
-        src_vocab_size = len(tokenizer)
-        tgt_vocab_size = len(tokenizer)
+        vocab_size = len(tokenizer)
 
     else:
-        from transformers import AutoTokenizer
-
-        src_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+        src_tokenizer = BertTokenizer.from_pretrained("bert-base-cased")
+        # src_vocab = src_tokenizer.get_vocab()
         vocab_path = LANGDICT[args.trg]
+
         tgt_tokenizer = AutoTokenizer.from_pretrained(vocab_path)
+        # custom_vocab_path = os.path.join(args.root, "vocab", f"{args.src}-{args.trg}")
+        # tgt_tokenizer.save_pretrained(custom_vocab_path)
 
-        from corpus_utils.bpe_mapper import CustomNMTTokenizer
+        # tgt_vocab = tgt_tokenizer.get_vocab()
+
+        # f = open(os.path.join(custom_vocab_path, "vocab.txt"), "a")
+        # for key in src_vocab:
+        #     if key not in tgt_vocab:
+        #         f.write(key + "\n")
+        # f.close()
+
+        tokenizer = create_shared_vocabulary(args,src_tokenizer,tgt_tokenizer)
+
+        # tokenizer = BertTokenizer.from_pretrained(custom_vocab_path)
+
+
+        # from corpus_utils.bpe_mapper import CustomNMTTokenizer
         from util.dataset import TEDParallelDataset
-        tokenizer = CustomNMTTokenizer(src_tokenizer, tgt_tokenizer)
+        # tokenizer = CustomNMTTokenizer(src_tokenizer, tgt_tokenizer)
         class_of_dataset = TEDParallelDataset
-
-        src_vocab_size = len(src_tokenizer)
-        tgt_vocab_size = len(tgt_tokenizer)
+        vocab_size = len(tokenizer)
 
     from transformers import MBartForConditionalGeneration, MBartConfig
     mbart_config = MBartConfig.from_pretrained("facebook/mbart-large-50")
@@ -147,16 +174,14 @@ def run(gpu, args):
     model = CustomMBart(config=mbart_config)
 
     if not args.mbart:
-        model.model.encoder.embed_tokens = nn.Embedding(src_vocab_size + 1, model.config.d_model, padding_idx=0)
-        model.model.decoder.embed_tokens = nn.Embedding(tgt_vocab_size + 1, model.config.d_model, padding_idx=0)
-
+        # model.model.shared = nn.Embedding(vocab_size + 2, model.config.d_model, padding_idx=0)
+        model.resize_token_embeddings(vocab_size + 2)
         model.init_weights()
-        model.lm_head = nn.Linear(model.config.d_model, tgt_vocab_size + 1, bias=False)
-        model.lm_head.weight = model.model.decoder.embed_tokens.weight
 
     print(model)
     model.to("cuda")
     wandb.watch(model)
+
     train_gen, dev_gen, test_gen = get_batchfier(args, tokenizer, class_of_dataset)
     trainer = get_trainer(args, model, train_gen, dev_gen, tokenizer)
     best_dir = os.path.join(args.savename, "best_model")
@@ -205,23 +230,35 @@ def run(gpu, args):
 
     if args.do_test:
         from util.evaluator import NMTEvaluator
-        model = CustomMBart.from_pretrained(args.encoder_class)
 
+        mbart_config.encoder_layers = 5
+        mbart_config.decoder_layers = 5
+        mbart_config.d_model = 512
+        mbart_config.encoder_attention_heads = 8
+        mbart_config.decoder_attention_heads = 8
+        mbart_config.decoder_ffn_dim = 2048
+        mbart_config.decoder_ffn_dim = 2048
+        model = CustomMBart(config=mbart_config)
+
+        if not args.mbart:
+            model.resize_token_embeddings(vocab_size + 2)
+            model.init_weights()
+
+        print(model)
         model.to(args.gpu)
-        if args.initialize_decoder:
-            import random
-            model.model.decoder.layers = model.model.decoder.layers[12 - args.n_layer_of_decoder:]
-
-            for param in model.model.encoder.parameters():
-                param.requires_grad = False
-
         state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "best_model", "best_model.bin"))
-
         model.load_state_dict(state_dict)
-        idx = tokenizer.additional_special_tokens.index(LMAP[args.trg])
-        special_ids = tokenizer.additional_special_tokens_ids
-        trg_id = special_ids[idx]
-        print(trg_id)
+
+
+        if args.mbart:
+            idx = tokenizer.additional_special_tokens.index(LMAP[args.trg])
+            special_ids = tokenizer.additional_special_tokens_ids
+            trg_id = special_ids[idx]
+            print(trg_id)
+
+        else:
+            src_id = len(tokenizer)
+            trg_id = len(tokenizer)+1
 
         evaluator = NMTEvaluator(args, model, tokenizer=tokenizer, trg_id=trg_id)
 

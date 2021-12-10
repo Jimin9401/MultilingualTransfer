@@ -1,26 +1,26 @@
 import os
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
 
-class Logger:
-    def __init__(self, log_dir):
-        """Create a summary writer logging to log_dir."""
-        self.writer = SummaryWriter(log_dir)
-
-    def scalar_summary(self, tag, value, step):
-        """Log a scalar variable."""
-        self.writer.add_scalar(tag=tag, scalar_value=value, global_step=step)
-
-    def image_summary(self, tag, images, step):
-        """Log a list of images."""
-        for i, img in enumerate(images):
-            # Write the image to a string
-            self.writer.add_image(tag=f'{tag}/{i}', img_tensor=img, global_step=step)
-
-    def histo_summary(self, tag, values, step, bins=1000):
-        """Log a histogram of the tensor of values."""
-        self.writer.add_histogram(tag=tag, values=values, global_step=step, max_bins=bins)
+# class Logger:
+#     def __init__(self, log_dir):
+#         """Create a summary writer logging to log_dir."""
+#         self.writer = SummaryWriter(log_dir)
+#
+#     def scalar_summary(self, tag, value, step):
+#         """Log a scalar variable."""
+#         self.writer.add_scalar(tag=tag, scalar_value=value, global_step=step)
+#
+#     def image_summary(self, tag, images, step):
+#         """Log a list of images."""
+#         for i, img in enumerate(images):
+#             # Write the image to a string
+#             self.writer.add_image(tag=f'{tag}/{i}', img_tensor=img, global_step=step)
+#
+#     def histo_summary(self, tag, values, step, bins=1000):
+#         """Log a histogram of the tensor of values."""
+#         self.writer.add_histogram(tag=tag, values=values, global_step=step, max_bins=bins)
 
 
 def log_full_eval_test_results_to_file(args, config, results):
