@@ -30,7 +30,7 @@ class ParallelDataset(Dataset):
 
         with open(tgt_filename, 'r') as f:
             self.tgt_lines = f.read().splitlines()
-        self.tgt_lines = [line[6:].strip() for line in self.tgt_lines ] # remove __en__ in first
+        self.tgt_lines = [line[6:].strip() for line in self.tgt_lines]  # remove __en__ in first
 
         print(f"total dataset size : {len(self.src_lines)}")
 
@@ -76,15 +76,15 @@ class TEDParallelDataset(Dataset):
         # super(TEDParallelDataset, self).__init__(args,src_filename,tgt_filename,tokenizer,src_lang,tgt_lang)
         self.tokenizer = tokenizer
         self.args = args
-        self.src_id = len(tokenizer.src_tokenizer)
-        self.tgt_id = len(tokenizer.tgt_tokenizer)
+        self.src_id = len(tokenizer)
+        self.tgt_id = len(tokenizer) + 1
 
         with open(src_filename, 'r') as f:
             self.src_lines = f.read().splitlines()
         with open(tgt_filename, 'r') as f:
             self.tgt_lines = f.read().splitlines()
 
-        self.tgt_lines = [line[6:].strip() for line in self.tgt_lines] # to remove lang_special string
+        self.tgt_lines = [line[6:].strip() for line in self.tgt_lines]  # to remove lang_special string
 
         print(f"total dataset size : {len(self.src_lines)}")
         assert len(self.src_lines) == len(self.tgt_lines)
@@ -108,10 +108,10 @@ class TEDParallelDataset(Dataset):
         return res
 
     def tokenize(self, src_sentence, tgt_sentence):
-        encoder_inputs = self.tokenizer.src_tokenizer.encode_plus(src_sentence, truncation=True,
-                                                                  max_length=self.args.seq_len)
-        decoder_inputs = self.tokenizer.tgt_tokenizer.encode_plus(tgt_sentence, truncation=True,
-                                                                  max_length=self.args.seq_len)
+        encoder_inputs = self.tokenizer.encode_plus(src_sentence, truncation=True,
+                                                    max_length=self.args.seq_len)
+        decoder_inputs = self.tokenizer.encode_plus(tgt_sentence, truncation=True,
+                                                    max_length=self.args.seq_len)
         inputs = {}
         inputs['input_ids'] = [self.src_id] + encoder_inputs['input_ids'][1:]
         inputs['attention_mask'] = encoder_inputs['attention_mask']

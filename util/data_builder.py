@@ -9,7 +9,8 @@ import csv
 logger = logging.getLogger(__file__)
 logging.basicConfig(level=logging.INFO)
 
-LMAP = {"ko": "ko_KR", "fi": "fi_FI", "ja": "ja_XX", "tr": "tr_TR", "en": "en_XX", "es": "es_XX", "fr": "fr_XX","ar":"ar_AR","vi":"VI_XX"}
+LMAP = {"ko": "ko_KR", "fi": "fi_FI", "ja": "ja_XX", "tr": "tr_TR", "en": "en_XX", "es": "es_XX", "fr": "fr_XX",
+        "ar": "ar_AR", "vi": "VI_XX"}
 
 
 def load_dataset(args, tokenizer, task="nmt"):
@@ -44,6 +45,7 @@ def load_dataset(args, tokenizer, task="nmt"):
     if not os.path.isdir(pairwise_cache):
         from sklearn.model_selection import train_test_split
         os.makedirs(pairwise_cache)
+
         train, test = train_test_split(sampled_df, test_size=2000, )
         train, dev = train_test_split(train, test_size=2000, )
 
@@ -139,14 +141,14 @@ def convert_data_to_examples(args, tokenizer: MBart50Tokenizer, dataset, type="t
 
 
 def get_ted_dataset(args, tokenizer: MBart50Tokenizer, class_of_dataset):
-    DATAPATH = os.path.join("data/ted",
+    DATAPATH = os.path.join("data/train-test",
                             f"{args.trg}_{args.src}")  # /home/nas1_userD/yujinbaek/dataset/text/parallel_data/ted2020
 
     if args.mbart:
-        cache_path = os.path.join("data/ted", "cache-mbart",
+        cache_path = os.path.join("data/train-test", "cache-mbart",
                                   f"{args.trg}_{args.src}")  # /home/nas1_userD/yujinbaek/dataset/text/parallel_data/ted2020
     else:
-        cache_path = os.path.join("data/ted", "cache-mono",
+        cache_path = os.path.join("data/train-test", "cache-mono",
                                   f"{args.trg}_{args.src}")  # /home/nas1_userD/yujinbaek/dataset/text/parallel_data/ted2020
 
     train_pkl_path = os.path.join(cache_path, "train.pkl")
@@ -187,3 +189,124 @@ def get_ted_dataset(args, tokenizer: MBart50Tokenizer, class_of_dataset):
         pd.to_pickle(test_dataset, test_pkl_path)
 
     return train_dataset, dev_dataset, test_dataset
+
+
+def remove_null(dataset, src, trg):
+    res = []
+    dataset = dataset.loc[:, [src, trg]].dropna(axis=0).reset_index(drop=True)
+
+    print("Remove null string")
+
+    for idx,row in tqdm(dataset.iterrows()):
+        if "NULL" in row[src]:
+            continue
+        if "NULL" in row[trg]:
+            continue
+        res.append({src:row[src],trg:row[trg]})
+    print("")
+
+    return pd.DataFrame(res)
+
+
+def get_dataset(args, tokenizer):
+
+    # train_dataset_path = os.path.join(args.root, f"all_talks_train.tsv")
+    # dev_dataset_path = os.path.join(args.root, f"all_talks_dev.tsv")
+    # test_dataset_path = os.path.join(args.root, f"all_talks_test.tsv")
+
+    dataset_path = os.path.join(args.root, "ted2020.tsv.gz")
+    sampled_dataset_path = os.path.join(args.root, f"ted2020-all-{args.src}-{args.trg}.tsv.gz")
+
+    cache_path = os.path.join(args.root, "ted/cache")
+    pairwise_cache = os.path.join(cache_path, f"{args.src}-{args.trg}")
+
+    if args.mbart:
+        pairwise_cache += f"-mbart"
+    else:
+        pairwise_cache += f"-mono"
+    print(sampled_dataset_path)
+    if not os.path.isfile(sampled_dataset_path):
+        df = pd.read_csv(dataset_path, sep='\t', keep_default_na=True, encoding='utf8',
+                         quoting=csv.QUOTE_NONE)
+        df = df.loc[:, [args.src, args.trg]].dropna(axis=0).reset_index(drop=True)
+        sampled_df = df
+        sampled_df.to_csv(sampled_dataset_path, index=False, encoding='utf8')
+
+
+
+    if not os.path.isdir(pairwise_cache):
+        from sklearn.model_selection import train_test_split
+        os.makedirs(pairwise_cache)
+
+
+        train, test = train_test_split(sampled_df, test_size=2000, )
+        train, dev = train_test_split(train, test_size=2000, )
+
+
+        # train = pd.read_csv(train_dataset_path, sep='\t', keep_default_na=True, encoding='utf8',
+        #                     quoting=csv.QUOTE_NONE)
+        # train=remove_null(train,args.src,args.trg)
+        #
+        # dev = pd.read_csv(dev_dataset_path, sep='\t', keep_default_na=True, encoding='utf8',
+        #                     quoting=csv.QUOTE_NONE)
+        # dev=remove_null(dev,args.src,args.trg)
+        #
+        # test = pd.read_csv(test_dataset_path, sep='\t', keep_default_na=True, encoding='utf8',
+        #                     quoting=csv.QUOTE_NONE)
+        # test=remove_null(test,args.src,args.trg)
+
+        train.to_csv(os.path.join(pairwise_cache, "train.csv"), index=False, encoding='utf8')
+        dev.to_csv(os.path.join(pairwise_cache, "dev.csv"), index=False, encoding='utf8')
+        test.to_csv(os.path.join(pairwise_cache, "test.csv"), index=False, encoding='utf8')
+
+        dev_pairs = get_pairs_from_multilingual(dev, src=args.src, trg=args.trg)
+        dev_examples = convert_data_to_examples_scratch(args, tokenizer, dev_pairs, "dev")
+        pd.to_pickle(dev_examples, os.path.join(pairwise_cache, "dev.pkl"))
+
+        test_pairs = get_pairs_from_multilingual(test, src=args.src, trg=args.trg)
+        test_examples = convert_data_to_examples_scratch(args, tokenizer, test_pairs, "test")
+        pd.to_pickle(test_examples, os.path.join(pairwise_cache, "test.pkl"))
+
+        train_pairs = get_pairs_from_multilingual(train, src=args.src, trg=args.trg)
+        train_examples = convert_data_to_examples_scratch(args, tokenizer, train_pairs, "train")
+        pd.to_pickle(train_examples, os.path.join(pairwise_cache, "train.pkl"))
+
+    else:
+        train_examples = pd.read_pickle(os.path.join(pairwise_cache, "train.pkl"))
+        dev_examples = pd.read_pickle(os.path.join(pairwise_cache, "dev.pkl"))
+        test_examples = pd.read_pickle(os.path.join(pairwise_cache, "test.pkl"))
+
+    return train_examples, dev_examples, test_examples
+
+
+def convert_data_to_examples_scratch(args, tokenizer: MBart50Tokenizer, dataset, type="train"):
+    examples = []
+    cc = Counter()
+
+
+    for idx, (src, trg) in tqdm(enumerate(zip(dataset["src"], dataset["trg"]))):
+
+        if args.mbart:
+            src_ids = tokenizer.encode(escape_attrib(src))
+            with tokenizer.as_target_tokenizer():
+                trg_ids = tokenizer.encode(escape_attrib(trg))
+        else:
+            src_ids = [len(tokenizer)] + tokenizer.encode(escape_attrib(src))[1:]
+            trg_ids = [len(tokenizer)+1] + tokenizer.encode(escape_attrib(trg))[1:]
+        cc.update(src_ids)
+        cc.update(trg_ids)
+        examples.append(NMTExample(guid=f"{type}-{idx}", input_ids=src_ids, trg_ids=trg_ids))
+
+    return examples
+
+
+def escape_attrib(s):
+    s = s.replace(u"&amp;", u"&")
+    s = s.replace(u"&apos;", u"'")
+    s = s.replace(u"&amp;apos;", u"'")
+    s = s.replace(u"&quot;", u"\"")
+    s = s.replace(u"&lt;", u"<")
+    s = s.replace(u"&gt;", u">")
+    s = s.replace(u"&#91;", u"[")
+    s = s.replace(u"&#93;", u"]")
+    return s
