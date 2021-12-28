@@ -1,3 +1,4 @@
+from numpy.lib.arraysetops import isin
 from util.trainer import NMTTrainer
 from util.data_builder import load_dataset
 from util.args import NMTArgument
@@ -8,11 +9,17 @@ import wandb
 # from corpus_utils.bpe_mapper import CustomTokenizer
 from transformers import AdamW, MBart50Tokenizer, MBartConfig
 # from t import WarmupLinearSchedule
-import apex
+# import apex
 from util.batch_generator import NMTBatchfier
+from my_utils.tokenization_nmt import NMTTokenizer
+from my_utils.nmt_dataset import ParallelDataset, ParallelDatasetV1, ParallelDatasetV2
+from my_utils.label_smoother import LabelSmoother
+from my_utils.bow_loss import BoWLoss
 # from model.classification_model import PretrainedTransformer
 from model.nmt_model import CustomMBart
 import torch.multiprocessing as mp
+from torch.utils.data import random_split
+from util.data_builder import LMAP
 
 from transformers import get_scheduler
 
@@ -35,22 +42,16 @@ def set_seed(random_seed):
 
 
 def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
-    optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
-
-    # optimizer=RAdam(model.parameters(),args.learning_rate,weight_decay=args.weight_decay)
-    # optimizer = AdamW(model.model.shared.parameters(), args.lr, weight_decay=args.weight_decay)
 
     if args.initial_freeze:
         optimizer = torch.optim.AdamW(model.model.shared.parameters(), args.lr, weight_decay=args.weight_decay)
     else:
         optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
 
-    if args.mixed_precision:
-        print('mixed_precision')
-        opt_level = 'O2'
-        model, optimizer = apex.amp.initialize(model, optimizer, opt_level=opt_level)
-
-        # from apex.parallel import DistributedDataParallel as DDP
+    # if args.mixed_precision:
+    #     print('mixed_precision')
+    #     scaler = torch.cuda.amp.GradScaler(enabled=True)
+                # from apex.parallel import DistributedDataParallel as DDP
         # model=DDP(model,delay_allreduce=True)
 
     if torch.cuda.device_count() > 1:
@@ -65,12 +66,33 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
     # decay_step = args.decay_step
     # decay_step=0
     # scheduler = WarmupLinearSchedule(optimizer, args.warmup_step, args.decay_step)
+    if isinstance(tokenizer, dict):
+        src_id = tokenizer['src'].lang_code
+        trg_id = tokenizer['tgt'].lang_code
+    else:
+        src_id = tokenizer.convert_tokens_to_ids(LMAP[args.src])
+        trg_id = tokenizer.convert_tokens_to_ids(LMAP[args.trg])
 
-    criteria = nn.CrossEntropyLoss(ignore_index=1)
+    print(args.src, src_id)
+    print(args.trg, trg_id)
+
+    if args.bow_loss:
+        criteria = BoWLoss(epsilon=0.2, src_id=src_id, trg_id=trg_id)
+    elif args.label_smoothing_factor != 0:
+        criteria = LabelSmoother(epsilon=args.label_smoothing_factor)
+    else:
+        if args.replace_vocab_w_existing_lm_tokenizers:
+            criteria = nn.CrossEntropyLoss(ignore_index=tokenizer['tgt'].padding_id)#ignore_index=1)
+        else:
+            criteria = nn.CrossEntropyLoss()#ignore_index=1)
+
 
     if args.max_train_steps is None:
-        args.num_update_steps_per_epoch = train_batchfier.num_buckets
+        num_buckets = len(train_batchfier) // args.per_gpu_train_batch_size + (len(train_batchfier)%args.per_gpu_train_batch_size != 0)
+        args.num_update_steps_per_epoch = num_buckets
         args.max_train_steps = args.n_epoch * args.num_update_steps_per_epoch
+    
+    print(f"max_train_steps: {args.max_train_steps}\n")
 
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
@@ -80,24 +102,134 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
     )
 
     trainer = NMTTrainer(args, model, train_batchfier, test_batchfier, optimizer, args.gradient_accumulation_step,
-                         criteria, args.clip_norm, args.mixed_precision, lr_scheduler)
+                         criteria, args.clip_norm, args.mixed_precision, lr_scheduler, tokenizer)
 
     return trainer
 
+def get_dataset(args, tokenizer):
+    DATAPATH = args.datapath #/home/nas1_userD/yujinbaek/dataset/text/parallel_data/ted2020
 
-def get_batchfier(args, tokenizer: MBart50Tokenizer):
-    n_gpu = torch.cuda.device_count()
-    train, dev, test = load_dataset(args, tokenizer, "nmt")
-    padding_idx = 1
+    if args.train_dev_split:
+        dataset = ParallelDataset(
+            args,
+            src_filename=os.path.join(DATAPATH,  f'train.{args.src}'),
+            # src_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.src}'),
+            # tgt_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.trg}'),
+            tgt_filename=os.path.join(DATAPATH,  f'train.{args.trg}'),
+            tokenizer=tokenizer,
+        )
+        split_ratio = [len(dataset)-args.validation_size, args.validation_size]
+        train_dataset, dev_dataset = random_split(dataset, split_ratio)
+    
+    else:
+        train_dataset = ParallelDataset(
+            args,
+            src_filename=os.path.join(DATAPATH,  f'train.{args.src}'),
+            # src_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.src}'),
+            # tgt_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.trg}'),
+            tgt_filename=os.path.join(DATAPATH,  f'train.{args.trg}'),
+            tokenizer=tokenizer,
+        )
 
-    train_batch = NMTBatchfier(args, train, batch_size=args.per_gpu_train_batch_size * n_gpu, maxlen=args.seq_len,
-                               padding_index=padding_idx, device="cuda")
-    dev_batch = NMTBatchfier(args, dev, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
-                             padding_index=padding_idx, device="cuda")
-    test_batch = NMTBatchfier(args, test, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
-                              padding_index=padding_idx, device="cuda")
+        dev_dataset = ParallelDataset(
+            args,
+            src_filename=os.path.join(DATAPATH,  f'dev.{args.src}'),
+            # tgt_filename=os.path.join(DATAPATH,  f'dev.{args.src}-{args.trg}.{args.trg}'),
+            # src_filename=os.path.join(DATAPATH,  f'dev.{args.src}-{args.trg}.{args.src}'),
+            tgt_filename=os.path.join(DATAPATH,  f'dev.{args.trg}'),
+            tokenizer=tokenizer,
+        )
 
-    return train_batch, dev_batch, test_batch
+    test_dataset = ParallelDataset(
+        args,
+        src_filename=os.path.join(DATAPATH, f'test.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH, f'test.{args.src}-{args.trg}.{args.trg}'),
+        # src_filename=os.path.join(DATAPATH, f'test.{args.src}-{args.trg}.{args.src}'),
+        tgt_filename=os.path.join(DATAPATH, f'test.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    return train_dataset, dev_dataset, test_dataset
+
+def get_datasetV1(args, tokenizer):
+    DATAPATH = args.datapath #/home/nas1_userD/yujinbaek/dataset/text/parallel_data/ted2020
+
+
+    train_dataset = ParallelDatasetV1(
+        args,
+        src_filename=os.path.join(DATAPATH,  f'train.{args.src}'),
+        # src_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.trg}'),
+        tgt_filename=os.path.join(DATAPATH,  f'train.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    dev_dataset = ParallelDatasetV1(
+        args,
+        src_filename=os.path.join(DATAPATH,  f'dev.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH,  f'dev.{args.src}-{args.trg}.{args.trg}'),
+        # src_filename=os.path.join(DATAPATH,  f'dev.{args.src}-{args.trg}.{args.src}'),
+        tgt_filename=os.path.join(DATAPATH,  f'dev.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    test_dataset = ParallelDatasetV1(
+        args,
+        src_filename=os.path.join(DATAPATH, f'test.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH, f'test.{args.src}-{args.trg}.{args.trg}'),
+        # src_filename=os.path.join(DATAPATH, f'test.{args.src}-{args.trg}.{args.src}'),
+        tgt_filename=os.path.join(DATAPATH, f'test.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    return train_dataset, dev_dataset, test_dataset
+
+def get_datasetV2(args, tokenizer):
+    DATAPATH = args.datapath #/home/nas1_userD/yujinbaek/dataset/text/parallel_data/ted2020
+
+
+    train_dataset = ParallelDatasetV2(
+        args,
+        src_filename=os.path.join(DATAPATH,  f'train.{args.src}'),
+        # src_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH,  f'train.{args.src}-{args.trg}.{args.trg}'),
+        tgt_filename=os.path.join(DATAPATH,  f'train.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    dev_dataset = ParallelDatasetV2(
+        args,
+        src_filename=os.path.join(DATAPATH,  f'dev.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH,  f'dev.{args.src}-{args.trg}.{args.trg}'),
+        # src_filename=os.path.join(DATAPATH,  f'dev.{args.src}-{args.trg}.{args.src}'),
+        tgt_filename=os.path.join(DATAPATH,  f'dev.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    test_dataset = ParallelDatasetV2(
+        args,
+        src_filename=os.path.join(DATAPATH, f'test.{args.src}'),
+        # tgt_filename=os.path.join(DATAPATH, f'test.{args.src}-{args.trg}.{args.trg}'),
+        # src_filename=os.path.join(DATAPATH, f'test.{args.src}-{args.trg}.{args.src}'),
+        tgt_filename=os.path.join(DATAPATH, f'test.{args.trg}'),
+        tokenizer=tokenizer,
+    )
+
+    return train_dataset, dev_dataset, test_dataset
+
+# def get_batchfier(args, tokenizer: MBart50Tokenizer):
+#     n_gpu = torch.cuda.device_count()
+#     train, dev, test = load_dataset(args, tokenizer, "nmt")
+#     padding_idx = 1
+
+#     train_batch = NMTBatchfier(args, train, batch_size=args.per_gpu_train_batch_size * n_gpu, maxlen=args.seq_len,
+#                                padding_index=padding_idx, device="cuda")
+#     dev_batch = NMTBatchfier(args, dev, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
+#                              padding_index=padding_idx, device="cuda")
+#     test_batch = NMTBatchfier(args, test, batch_size=args.per_gpu_eval_batch_size * n_gpu, maxlen=args.seq_len,
+#                               padding_index=padding_idx, device="cuda")
+
+#     return train_batch, dev_batch, test_batch
 
 
 def run(gpu, args):
@@ -108,40 +240,148 @@ def run(gpu, args):
     set_seed(args.seed)
 
     print(args.__dict__)
+
     pretrained_config = MBartConfig.from_pretrained(args.encoder_class)
 
+    pretrained_config.dropout = args.dropout
+    pretrained_config.attention_dropout = args.attention_dropout
+    pretrained_config.activation_dropout = args.activation_dropout
+
     from util.data_builder import LMAP
-    model = CustomMBart.from_pretrained(args.encoder_class)
+
+
+    model = CustomMBart.from_pretrained(args.encoder_class, cache_dir='/home/nas1_userD/yujinbaek/huggingface')
+
+    # dropout settings
+    for (module_name, module) in model.named_modules():
+        if hasattr(module, 'dropout'):
+            if 'attn' in module_name:
+                module.dropout = args.attention_dropout
+            else:
+                module.dropout = args.dropout
+        if hasattr(module, 'activation_dropout'):
+            module.activation_dropout = args.activation_dropout
+
+    # if args.embedding_adapting_process:
+    #     from copy import deepcopy
+    #     target_embedding = deepcopy(model.model.encoder.embed_tokens)
+    # else:
+    #     target_embedding = None
+
 
     if args.replace_vocab:
         from tokenizers import SentencePieceBPETokenizer
-        vocab_json_name = args.vocab_path + f"/{args.src}-{args.trg}-vocab.json"
-        merge_name = args.vocab_path + f"/{args.src}-{args.trg}-merges.txt"
+        vocab_size=args.vocab_size
+        logger.info(f"check vocab size::: currently you are using {vocab_size}")
+        
+        if args.corpora_bpe:
+            vocab_json_name = args.vocabpath + f"/{args.src}{args.trg}-{vocab_size}-corpora-vocab.json"
+            merge_name = args.vocabpath + f"/{args.src}{args.trg}-{vocab_size}-corpora-merges.txt"
+        else:
+            vocab_json_name = args.vocabpath + f"/{args.src}{args.trg}-{vocab_size}-vocab.json"
+            merge_name = args.vocabpath + f"/{args.src}{args.trg}-{vocab_size}-merges.txt"
 
         print(vocab_json_name)
         print(merge_name)
 
-        deployed_tokenizer = SentencePieceBPETokenizer.from_file(vocab_json_name, merge_name)
-        pretrained_tokenizer = MBart50Tokenizer.from_pretrained(args.encoder_class, src_lang=LMAP[args.src],
-                                                                tgt_lang=LMAP[args.trg])
-        from corpus_utils.vocab_util import align_vocabularies
+        src_lang=LMAP[args.src]
+        tgt_lang=LMAP[args.trg]
+        additional_special_tokens=[src_lang, tgt_lang]
 
-        new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer)
-        special_map = {k: v for k, v in
-                       zip(pretrained_tokenizer.additional_special_tokens,
-                           pretrained_tokenizer.additional_special_tokens_ids)}
-        special_ids = [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
-        args.new_special_src_id = len(new_dict)
-        args.new_special_trg_id = len(new_dict) + 1
-        model.rearrange_token_embedding(new_dict, special_ids)
+        deployed_tokenizer = NMTTokenizer(vocab_filename=vocab_json_name, merges_filename=merge_name, src_lang=src_lang, tgt_lang=tgt_lang, additional_special_tokens=additional_special_tokens)
+        
+        pretrained_tokenizer = MBart50Tokenizer.from_pretrained(args.encoder_class, src_lang=LMAP[args.src],
+                                                                tgt_lang=LMAP[args.trg], cache_dir='/home/nas1_userD/yujinbaek/huggingface')
+
+        from corpus_utils.vocab_util import align_vocabularies, align_vocabularies_with_dictionary
+
+        if args.bilingual_dictionary_filename:
+            new_dict = align_vocabularies_with_dictionary(pretrained_tokenizer, deployed_tokenizer, args.bilingual_dictionary_filename)
+            
+        else:
+            new_dict = align_vocabularies(pretrained_tokenizer, deployed_tokenizer)
+
+        # special_map = {k: v for k, v in
+        #                zip(pretrained_tokenizer.additional_special_tokens,
+        #                    pretrained_tokenizer.additional_special_tokens_ids)}
+        # special_ids = [special_map[LMAP[args.src]], special_map[LMAP[args.trg]]]
+        # args.new_special_src_id = len(new_dict)
+        # args.new_special_trg_id = len(new_dict) + 1
+        model.rearrange_token_embedding(new_dict)#, special_ids)
+
+        if args.random_embeddings:
+            model._init_weights(model.model.encoder.embed_tokens)
+            randomized_weights = model.model.encoder.embed_tokens.weight.data
+            model.lm_head.weight.data = randomized_weights
+
+        # if args.embedding_adapting_process:
+            # [3,4] -> [2,5,6]
+
+        if args.vr_with_adapted_embeddings:#
+            data = torch.load(args.adapted_embeddings_filepath)
+            model.model.encoder.embed_tokens.load_state_dict(data)
+            # check whether encoder embeddings + decoder embeddings + lm_head are tied correctly
+            not_coupled = (model.model.encoder.embed_tokens.weight.data == model.model.decoder.embed_tokens.weight.data).ne(1).long().sum().item()
+            if not_coupled:
+                print("encoder and decoder embeddings are not coupled correctly")
+            not_coupled = (model.model.encoder.embed_tokens.weight.data == model.lm_head.weight.data).ne(1).long().sum().item()
+            if not_coupled:
+                print("encoder embedding and decoder lm head are not coupled correctly")
+            print(f"embedding weights are properly loaded from {args.adapted_embeddings_filepath}")
+
+    elif args.replace_vocab_w_existing_lm_tokenizers:
+        from transformers import AutoTokenizer, BertTokenizerFast, BartTokenizerFast
+        from corpus_utils.vocab_util import align_vocabularies, align_vocabularies_w_bert_tokenizer, align_vocabularies_w_bart_tokenizer
+
+        src_tokenizer = AutoTokenizer.from_pretrained(args.src_tokenizer, cache_dir='/home/nas1_userD/yujinbaek/huggingface')
+        tgt_tokenizer = AutoTokenizer.from_pretrained(args.tgt_tokenizer, cache_dir='/home/nas1_userD/yujinbaek/huggingface')
+
+        pretrained_tokenizer = MBart50Tokenizer.from_pretrained(
+            args.encoder_class, 
+            src_lang=LMAP[args.src],
+            tgt_lang=LMAP[args.trg]
+            )
+
+        if isinstance(src_tokenizer, BertTokenizerFast):
+            src_new_dict = align_vocabularies_w_bert_tokenizer(pretrained_tokenizer, src_tokenizer, language=args.src)
+        else:
+            src_new_dict = align_vocabularies_w_bart_tokenizer(pretrained_tokenizer, src_tokenizer, language=args.src)
+
+        if isinstance(tgt_tokenizer, BertTokenizerFast):
+            tgt_new_dict = align_vocabularies_w_bert_tokenizer(pretrained_tokenizer, tgt_tokenizer, language=args.trg)
+        else:
+            tgt_new_dict = align_vocabularies_w_bart_tokenizer(pretrained_tokenizer, tgt_tokenizer, language=args.trg)
+        
+        new_dict = {'src': src_new_dict, 'tgt': tgt_new_dict}
+        deployed_tokenizer = {'src': src_tokenizer, 'tgt': tgt_tokenizer}
+        model.rearrange_token_embedding_w_existing_lm_tokenizers(new_dict)
+        
+        # tying special tokens
+        ## share special tokens btw encoder and decoder
+        # </s> [SEP]
+        # decoder_eos_token_id = tgt_tokenizer.eos_token_id
+        # encoder_eos_token_id = src_tokenizer.eos_token_id if src_tokenizer.eos_token_id is not None else src_tokenizer.sep_token_id
+        # model.lm_head.weight[decoder_eos_token_id] = model.model.encoder.embed_tokens.weight[encoder_eos_token_id]
+        # # PAD
+        # decoder_pad_token_id = tgt_tokenizer.pad_token_id
+        # encoder_pad_token_id = src_tokenizer.pad_token_id
+        # model.lm_head.weight[decoder_pad_token_id] = model.model.encoder.embed_tokens.weight[encoder_pad_token_id]
 
     else:
         special_ids = [LMAP[args.src], LMAP[args.trg]]
-        deployed_tokenizer = MBart50Tokenizer.from_pretrained(MBARTCLASS, src_lang=LMAP[args.src],
-                                                              tgt_lang=LMAP[args.trg])
+        deployed_tokenizer = MBart50Tokenizer.from_pretrained(
+            args.encoder_class, 
+            src_lang=LMAP[args.src],
+            tgt_lang=LMAP[args.trg], 
+            cache_dir='/home/nas1_userD/yujinbaek/huggingface'
+            )
 
     args.extended_vocab_size = 0
-    train_gen, dev_gen, test_gen = get_batchfier(args, deployed_tokenizer)
+    if isinstance(deployed_tokenizer, dict):
+        train_gen, dev_gen, test_gen = get_datasetV1(args, deployed_tokenizer)
+        # train_gen, dev_gen, test_gen = get_datasetV2(args, deployed_tokenizer)
+    else:
+        train_gen, dev_gen, test_gen = get_dataset(args, deployed_tokenizer)
 
     model.to("cuda")
     wandb.watch(model)
@@ -153,45 +393,34 @@ def run(gpu, args):
 
     results = []
 
-    optimal_perplexity = 1000.0
+    optimal_bleu = 0.0
     not_improved = 0
 
     if args.do_train:
         for e in tqdm(range(0, args.n_epoch)):
             print("Epoch : {0}".format(e))
 
-            # if args.initial_freeze and e < args.initial_epoch_for_rearrange:
-            #     for params in model.model.encoder.parameters():
-            #         params.requires_grad=False
-            #     for params in model.model.decoder.parameters():
-            #         params.requires_grad=False
-            #     trainer.train_epoch()
-            # else:
-            #     for params in model.parameters():
-            #         params.requires_grad=True
+            state = (model.model.decoder.embed_tokens.weight.data == model.lm_head.weight.data)            
+            print("STATE: ", state.long().ne(1).sum())
             trainer.train_epoch()
 
-            save_path = os.path.join(args.savename, "epoch_{0}".format(e))
-            if not os.path.isdir(save_path):
-                os.makedirs(save_path)
-
             if args.evaluate_during_training:
-                loss, step_perplexity = trainer.test_epoch()
-                results.append({"eval_loss": loss, "eval_ppl": step_perplexity})
+                eval_metric = trainer.test_epoch(epoch=e)
+                results.append({"eval_bleu": eval_metric["score"]})
 
-                if optimal_perplexity > step_perplexity:
-                    optimal_perplexity = step_perplexity
+                if optimal_bleu < eval_metric["score"]:
+                    optimal_bleu = eval_metric["score"]
                     # if args.distributed_training:
                     #     torch.save(model.module.state_dict(), os.path.join(best_dir, "best_model.bin"))
                     # else:
-                    torch.save(model.state_dict(), os.path.join(best_dir, "best_model.bin"))
+                    torch.save(model.state_dict(), os.path.join(best_dir, f"best_model_{args.wandb_run_name}.bin"))
                     print("Update Model checkpoints at {0}!! ".format(best_dir))
                     not_improved = 0
                 else:
                     not_improved += 1
-
-            if not_improved >= 5:
-                break
+            
+            # if not_improved >= 5:
+            #     break
 
         log_full_eval_test_results_to_file(args, config=pretrained_config, results=results)
 
@@ -207,48 +436,55 @@ def run(gpu, args):
         # args.aug_word_length = len(tokenizer) - len(original_tokenizer)
         # trainer.test_batchfier = test_gen
         from util.evaluator import NMTEvaluator
-        model = CustomMBart.from_pretrained(args.encoder_class)
+        model = CustomMBart.from_pretrained(args.encoder_class, cache_dir='/home/nas1_userD/yujinbaek/huggingface')
         if args.replace_vocab:
-            model.resize_token_embeddings(len(new_dict) + 2)
+            # model.resize_token_embeddings(len(new_dict) + 2)
+            if 'tgt' in new_dict:
+                new_dict = new_dict['tgt']
+            model.resize_token_embeddings(len(new_dict))
             model.final_logits_bias.data = torch.zeros([1, 250054])
 
         model.to(args.gpu)
-
-        state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "best_model", "best_model.bin"))
-
-        model.load_state_dict(state_dict)
-        if args.replace_vocab:
+        # state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "epoch_4", "epoch_4_model.bin"))
+        if args.vr_with_adapted_embeddings:
+            print("zero shot test")
+        elif args.replace_vocab:
+            state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "best_model", f"best_model_{args.wandb_run_name}.bin"))
+            model.load_state_dict(state_dict)
             shape = model.final_logits_bias.data.shape
             model.final_logits_bias.data = torch.zeros(shape)  # we remove final logit bias when training
 
         if args.replace_vocab:
-            trg_id = len(new_dict) + 1
+            # trg_id = len(new_dict) + 1
+            trg_id = deployed_tokenizer.convert_tokens_to_ids(LMAP[args.trg])
         else:
-
             idx=deployed_tokenizer.additional_special_tokens.index(LMAP[args.trg])
             special_ids = deployed_tokenizer.additional_special_tokens_ids
             trg_id =special_ids[idx]
 
         evaluator = NMTEvaluator(args, model, tokenizer=deployed_tokenizer, trg_id=trg_id)
 
-        if not os.path.isdir(args.test_file):
-            os.makedirs(args.test_file)
+        # if not os.path.isdir(args.test_file):
+        #     os.makedirs(args.test_file)
 
-        output = evaluator.generate_epoch(test_gen)
-        if args.beam:
-            pd.to_pickle(output, os.path.join(args.test_file, "result-beam.pkl"))
-        else:
-            pd.to_pickle(output, os.path.join(args.test_file, "result-greedy.pkl"))
+        # output = evaluator.generate_epoch(test_gen)
+        score = evaluator.generate_epoch(test_gen)
+        wandb.log({'test_score': score})
+
+        # if args.beam:
+        #     pd.to_pickle(output, os.path.join(args.test_file, "result-beam.pkl"))
+        # else:
+        #     pd.to_pickle(output, os.path.join(args.test_file, "result-greedy.pkl"))
 
         # log_full_test_results_to_file(args, config=pretrained_config)
 
 
 if __name__ == "__main__":
-
     args = NMTArgument()
     args.ngpus_per_node = torch.cuda.device_count()
     args.world_size = args.ngpus_per_node
     project_name=f"{args.src}-{args.trg}"
+    
 
     if args.replace_vocab:
         project_name+="-replace_vocab"
@@ -257,7 +493,14 @@ if __name__ == "__main__":
         project_name += "-embedding_only"
 
 
-    wandb.init(project=project_name, reinit=True)
+    wandb.init(project=project_name, reinit=True, name=args.wandb_run_name)
+
+    if args.wandb_run_name:
+        wandb.run.name =  args.wandb_run_name
+        wandb.run.save()
+    else:
+        args.wandb_run_name = wandb.run.name
+
     wandb.config.update(args)
 
     if args.distributed_training:
