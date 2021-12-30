@@ -40,13 +40,32 @@ def set_seed(random_seed):
     np.random.seed(random_seed)
     random.seed(random_seed)
 
+def generate_parameters(encoder, except_group):
+    for name, parameter in encoder.named_parameters():
+        if name in except_group:
+            continue
+        else:
+            yield parameter
+
+def generate_combined_parameters(param1, param2):
+    for param in param1:
+        yield param
+    for param in param2:
+        yield param
+
 
 def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
 
     if args.initial_freeze:
-        optimizer = torch.optim.AdamW(model.model.shared.parameters(), args.lr, weight_decay=args.weight_decay)
+        parameters_to_optimize = generate_combined_parameters(model.model.shared.parameters(), model.lm_head.parameters())
+        # optimizer = torch.optim.AdamW(model.model.shared.parameters(), args.lr, weight_decay=args.weight_decay)
+        optimizer = torch.optim.AdamW(parameters_to_optimize, args.lr, weight_decay=args.weight_decay)
+        zeroing_params = generate_parameters(model, 'model.shared.weight')
+        zeroing_optimizer = torch.optim.AdamW(zeroing_params, args.lr, weight_decay=args.weight_decay)
+        
     else:
         optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=args.weight_decay)
+        zeroing_optimizer=None
 
     # if args.mixed_precision:
     #     print('mixed_precision')
@@ -102,7 +121,7 @@ def get_trainer(args, model, train_batchfier, test_batchfier, tokenizer):
     )
 
     trainer = NMTTrainer(args, model, train_batchfier, test_batchfier, optimizer, args.gradient_accumulation_step,
-                         criteria, args.clip_norm, args.mixed_precision, lr_scheduler, tokenizer)
+                         criteria, args.clip_norm, args.mixed_precision, lr_scheduler, tokenizer, zeroing_optimizer=zeroing_optimizer)
 
     return trainer
 
@@ -453,6 +472,11 @@ def run(gpu, args):
             model.load_state_dict(state_dict)
             shape = model.final_logits_bias.data.shape
             model.final_logits_bias.data = torch.zeros(shape)  # we remove final logit bias when training
+        else:
+            filename = os.path.join(args.checkpoint_name_for_test, "best_model", f"best_model_{args.wandb_run_name}.bin")
+            print(filename)
+            state_dict = torch.load(os.path.join(args.checkpoint_name_for_test, "best_model", f"best_model_{args.wandb_run_name}.bin"))
+            model.load_state_dict(state_dict)
 
         if args.replace_vocab:
             # trg_id = len(new_dict) + 1
@@ -491,6 +515,12 @@ if __name__ == "__main__":
 
     if args.initial_freeze:
         project_name += "-embedding_only"
+    
+    if args.encoder_class.endswith("one-to-many-mmt"):
+        project_name+="-one_to_many_mmt"
+
+    elif args.encoder_class.endswith("many-to-many-mmt"):
+        project_name+="-many_to_many_mmt"
 
 
     wandb.init(project=project_name, reinit=True, name=args.wandb_run_name)
