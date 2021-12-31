@@ -52,7 +52,7 @@ class ExperimentArgument:
 
         parser.add_argument("--num_warmup_steps", type=int, default=0,
                             help="Number of steps for the warmup in the lr scheduler.")
-        parser.add_argument("--lr_scheduler_type", default="linear", help="The scheduler type to use.",
+        parser.add_argument("--lr_scheduler_type", default="cosine", help="The scheduler type to use.",
                             choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant",
                                      "constant_with_warmup"])
 
@@ -60,7 +60,7 @@ class ExperimentArgument:
         parser.add_argument("--distributed_training", action="store_true")
         parser.add_argument("--checkpoint_dir", default="checkpoints", type=str)
         parser.add_argument("--test_log_dir", default="results", type=str)
-        parser.add_argument("--vocab_size", type=int, default=10000)
+        parser.add_argument("--vocab_size", type=int, default=30000)
         parser.add_argument("--use_fragment", action="store_true")
         parser.add_argument("--transfer_type", choices=["random", "average_input"], default="average_input",
                             type=str)
@@ -158,11 +158,11 @@ class TokenizerArgument:
     def get_args(self):
         parser = argparse.ArgumentParser()
 
-        parser.add_argument("--src", choices=["en", "fi"],
+        parser.add_argument("--src", choices=["en", "fi", 'vi', 'th', 'mk', 'he', 'fa', 'uk', 'hr', 'tr'],
                             required=True,
                             type=str)
 
-        parser.add_argument("--trg", choices=["ko", "tr", "ja", "fi"],
+        parser.add_argument("--trg", choices=["ko", "tr", "ja", "fi", 'vi', 'th', 'mk', 'he', 'fa', 'uk', 'hr', 'tr'],
                             required=True,
                             type=str)
 
@@ -197,29 +197,39 @@ class NMTArgument:
         parser = argparse.ArgumentParser()
         parser.add_argument("--dataset", choices=["ted"],
                             required=True, type=str)
-        parser.add_argument("--src", choices=["en", "fi"],
+        parser.add_argument("--datapath", 
+                            required=True, type=str)
+        parser.add_argument("--vocabpath", type=str)
+        parser.add_argument("--src", choices=["en", "fi", "ko", 'vi', 'th', 'mk', 'he', 'fa', 'uk', 'hr', 'tr'],
                             required=True, default="en", type=str)
-        parser.add_argument("--trg", choices=["ko", "ja", "fi", "tr", "en"],
+        parser.add_argument("--trg", choices=["ko", "ja", "fi", "tr", "en",'vi', 'th', 'mk', 'he', 'fa', 'uk', 'hr'],
                             required=True,
                             type=str)
         parser.add_argument("--root", type=str, default="data")
         parser.add_argument("--n_sample", type=int, default=50000)
+        parser.add_argument("--validation_size", type=int, default=2000)
 
         parser.add_argument("--n_epoch", default=10, type=int)
         parser.add_argument("--seed", default=777, type=int)
         parser.add_argument("--per_gpu_train_batch_size", default=16, type=int)
         parser.add_argument("--per_gpu_eval_batch_size", default=32, type=int)
         parser.add_argument("--gradient_accumulation_step", default=1, type=int)
-        parser.add_argument("--seq_len", default=256, type=int)
+        parser.add_argument("--seq_len", default=512, type=int)
         parser.add_argument("--warmup_step", default=0, type=int)
         parser.add_argument("--decay_step", default=20000, type=int)
         parser.add_argument("--clip_norm", default=0.25, type=float)
         parser.add_argument("--replc", default=0.25, type=float)
 
         parser.add_argument("--mixed_precision", action="store_true")
+        parser.add_argument("--corpora_bpe", action="store_true")
+        parser.add_argument("--bow_loss", action="store_true")
+        parser.add_argument("--bilingual_dictionary_filename", type=str)
+        parser.add_argument("--adapted_embeddings_filepath", type=str)
+        parser.add_argument("--regularization_side", type=str, default='target')
 
         parser.add_argument("--lr", default=1e-5, type=float)
         parser.add_argument("--distributed_training", action="store_true")
+        parser.add_argument("--train_with_regularization", action="store_true")
 
         parser.add_argument("--weight_decay", default=0.0, type=float)
         parser.add_argument("--do_train", action="store_true")
@@ -235,8 +245,14 @@ class NMTArgument:
         parser.add_argument("--checkpoint_dir", default="checkpoints", type=str)
         parser.add_argument("--test_dir", default="test", type=str)
 
+        parser.add_argument("--src_tokenizer")
+        parser.add_argument("--tgt_tokenizer")
+
         parser.add_argument("--encoder_class",
-                            choices=["facebook/mbart-large-50", "facebook/mbart-50-large-many-to-many"
+                            choices=["facebook/mbart-large-50", 
+                                     "facebook/mbart-large-50-one-to-many-mmt",
+                                     "facebook/mbart-large-50-many-to-many-mmt",
+                                     "facebook/mbart-large-50-many-to-one-mmt",
                                      ], default="facebook/mbart-large-50")
         parser.add_argument("--max_train_steps", default=None, type=int)
         parser.add_argument("--lr_scheduler_type", default="linear", help="The scheduler type to use.",
@@ -246,8 +262,20 @@ class NMTArgument:
         parser.add_argument("--num_warmup_steps", type=int, default=0,
                             help="Number of steps for the warmup in the lr scheduler.")
         parser.add_argument("--replace_vocab", action="store_true")
+        parser.add_argument("--vr_with_adapted_embeddings", action="store_true")
+        
+        parser.add_argument("--replace_vocab_w_existing_lm_tokenizers", action="store_true")
+        parser.add_argument("--random_embeddings", action="store_true")
         parser.add_argument("--vocab_size", type=int, default=50000)
         parser.add_argument("--checkpoint_name_for_test", type=str, default="")
+        parser.add_argument("--wandb_run_name", type=str, default="")
+        parser.add_argument("--train_dev_split", action="store_true")
+        parser.add_argument("--length_penalty", default=1.0, type=float)
+        parser.add_argument("--label_smoothing_factor", default=0.2, type=float)
+        parser.add_argument("--dropout", default=0.3, type=float)
+        parser.add_argument("--activation_dropout", default=0.1, type=float)
+        parser.add_argument("--attention_dropout", default=0.1, type=float)
+        
 
         return parser
 
@@ -261,10 +289,68 @@ class NMTArgument:
                                                f"{self.data['src']}-{self.data['trg']}-{self.data['vocab_size']}")
 
         if self.data["do_test"]:
-            self.data["test_file"] = os.path.join(self.data["test_dir"], f"nmt-{self.data['src']}-{self.data['trg']}")
-            if self.data["checkpoint_name_for_test"] == "":
-                raise ValueError("Specify checkpoint name")
-            if self.data["replace_vocab"]:
-                self.data["test_file"] += "-replace"
+            self.data["test_file"] = os.path.join(self.data["test_dir"], f"{self.data['src']}-{self.data['trg']}-{self.data['vocab_size']}-{self.data['wandb_run_name']}")
+        #     self.data["test_file"] = os.path.join(self.data["test_dir"], f"nmt-{self.data['src']}-{self.data['trg']}")
+        #     if self.data["checkpoint_name_for_test"] == "":
+        #         raise ValueError("Specify checkpoint name")
+        #     if self.data["replace_vocab"]:
+        #         self.data["test_file"] += "-replace"
         if self.data["replace_vocab"]:
             self.data["savename"] += "-replace"
+
+
+class EmbeddingAdapterArgument:
+    def __init__(self):
+        data = {}
+        parser = self.get_args()
+        args = parser.parse_args()
+
+        data.update(vars(args))
+        self.data = data
+        self.__dict__ = data
+
+    def get_args(self):
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--datapath", 
+                            required=True, type=str)
+        parser.add_argument("--vocabpath", type=str)
+        parser.add_argument("--src", choices=["en", "fi", "ko", 'vi', 'th', 'mk', 'he', 'fa', 'uk', 'hr', 'tr'],
+                            required=True, default="en", type=str)
+        parser.add_argument("--trg", choices=["ko", "ja", "fi", "tr", "en",'vi', 'th', 'mk', 'he', 'fa', 'uk', 'hr'],
+                            required=True,
+                            type=str)
+        parser.add_argument("--root", type=str, default="data")
+
+        parser.add_argument("--n_epoch", default=10, type=int)
+        parser.add_argument("--seed", default=777, type=int)
+        parser.add_argument("--warmup_step", default=0, type=int)
+        parser.add_argument("--n_groups_to_update", default=500, type=int)
+        parser.add_argument("--clip_norm", default=0.25, type=float)
+
+        parser.add_argument("--lr", default=1e-5, type=float)
+        parser.add_argument("--distributed_training", action="store_true")
+
+        parser.add_argument("--weight_decay", default=0.0, type=float)
+
+        parser.add_argument("--encoder_class",
+                            choices=["facebook/mbart-large-50", 
+                                     "facebook/mbart-large-50-one-to-many-mmt",
+                                     "facebook/mbart-large-50-many-to-many-mmt",
+                                     "facebook/mbart-large-50-many-to-one-mmt",
+                                     ], default="facebook/mbart-large-50")
+        parser.add_argument("--max_train_steps", default=None, type=int)
+        parser.add_argument("--lr_scheduler_type", help="The scheduler type to use.",
+                            choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant",
+                                     "constant_with_warmup"])
+
+        parser.add_argument("--num_warmup_steps", type=int, default=0,
+                            help="Number of steps for the warmup in the lr scheduler.")
+        parser.add_argument("--replace_vocab", action="store_true")
+        parser.add_argument("--vocab_size", type=int, default=50000)
+        parser.add_argument("--wandb_run_name", type=str, default="")
+        parser.add_argument("--dropout", default=0.3, type=float)
+        parser.add_argument("--activation_dropout", default=0.1, type=float)
+        parser.add_argument("--attention_dropout", default=0.1, type=float)
+        parser.add_argument("--output_filepath", default='/home/nas1_userD/yujinbaek/out')
+        return parser
+
