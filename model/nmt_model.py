@@ -1,19 +1,17 @@
 from transformers import MBartForConditionalGeneration, MBartConfig
 from transformers.models.mbart import MBartForConditionalGeneration
-from fairseq.models.transformer import transformer_wmt_en_de
+#from fairseq.models.transformer import transformer_wmt_en_de
 
 # from transformers.modeling_bart import BartForConditionalGeneration
 
 import torch
 import torch.utils.checkpoint
 from torch.nn import CrossEntropyLoss, MSELoss
+import math
 
 from transformers.modeling_outputs import (
     Seq2SeqLMOutput,
 )
-
-
-
 
 def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int):
     """
@@ -69,9 +67,15 @@ class CustomMBart(MBartForConditionalGeneration):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        # if labels is not None:
-        #     if decoder_input_ids is None:
-        #         decoder_input_ids = shift_tokens_right(labels, self.config.pad_token_id)
+
+        if labels is not None:
+            if decoder_input_ids is None:
+                decoder_input_ids = shift_tokens_right(labels, self.config.pad_token_id) # config.pad_token_id
+                #decoder_input_ids = shift_tokens_right(labels, 3) # config.pad_token_id
+
+        # print(decoder_input_ids)
+        # print(decoder_input_ids[0].tolist())
+
 
         outputs = self.model(
             input_ids,
@@ -114,23 +118,80 @@ class CustomMBart(MBartForConditionalGeneration):
         )
 
 
-    def rearrange_token_embedding(self, new_dict, special_ids: list):
-        new_weight = torch.randn([len(new_dict) + 2, self.config.hidden_size])
+    def rearrange_token_embedding(self, new_dict):#, special_ids: list):
+        # new_weight = torch.randn([len(new_dict) + 2, self.config.hidden_size])
+        new_weight = torch.randn([len(new_dict), self.config.hidden_size])
         # new_bias = torch.randn([1, len(new_dict) + 2])
 
         pretrained_word_embedding = self.model.encoder.embed_tokens.weight.data
 
-        src_id, trg_id = special_ids
-        src_map_id, trg_map_id = len(new_dict), len(new_dict) + 1
+        # src_id, trg_id = special_ids
+        # src_map_id, trg_map_id = len(new_dict), len(new_dict) + 1
 
         for new_idx, original_idx in new_dict.items():
             if len(original_idx)>0:
                 original_idx = torch.LongTensor(original_idx)
                 new_weight[new_idx] = torch.mean(pretrained_word_embedding[original_idx], 0)
 
-        new_weight[src_map_id] = pretrained_word_embedding[src_id]
-        new_weight[trg_map_id] = pretrained_word_embedding[trg_id]
+        # new_weight[src_map_id] = pretrained_word_embedding[src_id]
+        # new_weight[trg_map_id] = pretrained_word_embedding[trg_id]
 
         self.model.encoder.embed_tokens.weight.data = new_weight
         self.lm_head.weight.data = new_weight # shared embedding
 
+    def rearrange_token_embedding_w_existing_lm_tokenizers(self, new_dict):
+        # new_weight = torch.randn([len(new_dict) + 2, self.config.hidden_size])
+        src_dict = new_dict['src']
+        tgt_dict = new_dict['tgt']
+        
+        new_encoder_emb_weight = torch.randn([len(src_dict), self.config.hidden_size])
+        new_decoder_emb_weight = torch.randn([len(tgt_dict), self.config.hidden_size])
+        # print(new_encoder_emb_weight.size())
+        # print(new_decoder_emb_weight.size())
+        # new_bias = torch.randn([1, len(new_dict) + 2])
+
+        pretrained_word_embedding = self.model.encoder.embed_tokens.weight.data
+
+        # src_id, trg_id = special_ids
+        # src_map_id, trg_map_id = len(new_dict), len(new_dict) + 1
+
+        for new_idx, original_idx in src_dict.items():
+            if len(original_idx)>0:
+                original_idx = torch.LongTensor(original_idx)
+                new_encoder_emb_weight[new_idx] = torch.mean(pretrained_word_embedding[original_idx], 0)
+
+        for new_idx, original_idx in tgt_dict.items():
+            if len(original_idx)>0:
+                original_idx = torch.LongTensor(original_idx)
+                new_decoder_emb_weight[new_idx] = torch.mean(pretrained_word_embedding[original_idx], 0)
+
+        self.model.encoder.embed_tokens.weight.data = new_encoder_emb_weight
+        self.model.decoder.embed_tokens.weight.data = new_decoder_emb_weight
+        self.lm_head.weight = self.model.decoder.embed_tokens.weight
+
+
+class Adapter(torch.nn.Module):
+    def __init__(self, embedding_layer, pos_embedding_layer, max_seq_len=512):
+        super().__init__()
+        self.embedding_layer = embedding_layer
+        self.pos_embedding_layer = pos_embedding_layer
+        self.embed_scale = math.sqrt(self.embedding_layer.embedding_dim)
+        self.max_seq_len = max_seq_len
+
+    def forward(
+        self,
+        input_ids
+    ):
+
+        input_shape = input_ids.size()
+        if input_shape[-1] > 512:
+            return None
+        
+        else:
+            input_ids = input_ids.view(-1, input_shape[-1])
+
+            inputs_embeds = self.embedding_layer(input_ids) * self.embed_scale
+
+            embed_pos = self.pos_embedding_layer(input_shape)
+            hidden_states = inputs_embeds + embed_pos
+        return hidden_states
